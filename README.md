@@ -90,6 +90,12 @@ edge-gemma-speak --stt-beam-size 10
 # Adjust VAD sensitivity (default: 0.5)
 edge-gemma-speak --stt-vad-threshold 0.3
 
+# Adjust minimum speech duration in ms (default: 250)
+edge-gemma-speak --stt-vad-min-speech-duration 200
+
+# Adjust minimum silence duration in ms (default: 1000)
+edge-gemma-speak --stt-vad-min-silence-duration 800
+
 # Change Whisper model size (tiny, base, small, medium, large)
 edge-gemma-speak --stt-model small
 ```
@@ -264,6 +270,7 @@ For large LLM models:
 - Check microphone permissions in system settings
 - Close other audio applications
 - Adjust VAD threshold: `--stt-vad-threshold 0.3`
+- Reduce silence duration for faster response: `--stt-vad-min-silence-duration 500`
 
 ### Model File Not Found
 

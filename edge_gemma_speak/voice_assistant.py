@@ -72,7 +72,7 @@ class ModelConfig:
     stt_temperature: float = 0.0
     stt_vad_threshold: float = 0.5
     stt_vad_min_speech_duration_ms: int = 250
-    stt_vad_min_silence_duration_ms: int = 2000
+    stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
     # TTS detailed settings
     tts_voice: str = "ko-KR-HyunsuMultilingualNeural"

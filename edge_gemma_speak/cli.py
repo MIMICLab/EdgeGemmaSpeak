@@ -107,6 +107,10 @@ def main():
                        help="STT temperature for sampling (default: 0.0)")
     parser.add_argument("--stt-vad-threshold", type=float, default=0.5,
                        help="STT VAD threshold (default: 0.5)")
+    parser.add_argument("--stt-vad-min-speech-duration", type=int, default=250,
+                       help="Minimum speech duration in ms (default: 250)")
+    parser.add_argument("--stt-vad-min-silence-duration", type=int, default=1000,
+                       help="Minimum silence duration in ms before cutting off (default: 1000)")
     
     # LLM 파라미터
     parser.add_argument("--llm-max-tokens", type=int, default=512,
@@ -268,6 +272,8 @@ def main():
         stt_beam_size=args.stt_beam_size,
         stt_temperature=args.stt_temperature,
         stt_vad_threshold=args.stt_vad_threshold,
+        stt_vad_min_speech_duration_ms=args.stt_vad_min_speech_duration,
+        stt_vad_min_silence_duration_ms=args.stt_vad_min_silence_duration,
         # TTS parameters
         tts_voice=tts_voice,
         # LLM parameters

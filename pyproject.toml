@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edge_gemma_speak"
-version = "0.1.0"
+version = "0.1.1"
 description = "Edge-based voice assistant using Gemma LLM with STT and TTS capabilities"
 readme = "README.md"
 requires-python = ">=3.8"

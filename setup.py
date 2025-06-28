@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="edge_gemma_speak",
-    version="0.1.0",
+    version="0.1.1",
     author="MimicLab, Sogang University",
     author_email="",
     description="Edge-based voice assistant using Gemma LLM with STT and TTS capabilities",

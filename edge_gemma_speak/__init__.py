@@ -12,7 +12,7 @@ from .voice_assistant import (
     main
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "MimicLab, Sogang University"
 
 __all__ = [
