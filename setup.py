@@ -4,14 +4,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="edge_gemma_speak",
-    version="0.1.1",
-    author="MimicLab, Sogang University",
+    name="agentvox",
+    version="0.1.0",
+    author="MIMIC Lab",
     author_email="",
     description="Edge-based voice assistant using Gemma LLM with STT and TTS capabilities",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/edge_gemma_speak",
+    url="https://github.com/yourusername/agentvox",
     packages=find_packages(),
     license="MIT",
     classifiers=[
@@ -41,11 +41,11 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "edge-gemma-speak=edge_gemma_speak.cli:main",
+            "agentvox=agentvox.cli:main",
         ],
     },
     package_data={
-        "edge_gemma_speak": ["*.gguf"],
+        "agentvox": ["*.gguf"],
     },
     include_package_data=True,
 )

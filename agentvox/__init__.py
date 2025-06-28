@@ -1,5 +1,5 @@
 """
-Edge Gemma Speak - Edge-based voice assistant using Gemma LLM with STT and TTS capabilities
+AgentVox - Edge-based voice assistant using Gemma LLM with STT and TTS capabilities
 """
 
 from .voice_assistant import (
@@ -12,8 +12,8 @@ from .voice_assistant import (
     main
 )
 
-__version__ = "0.1.1"
-__author__ = "MimicLab, Sogang University"
+__version__ = "0.1.0"
+__author__ = "MIMIC Lab"
 
 __all__ = [
     "VoiceAssistant",

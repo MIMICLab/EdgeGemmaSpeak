@@ -3,14 +3,14 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "edge_gemma_speak"
-version = "0.1.1"
+name = "agentvox"
+version = "0.1.0"
 description = "Edge-based voice assistant using Gemma LLM with STT and TTS capabilities"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "MimicLab, Sogang University"},
+    {name = "MIMIC Lab"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -37,14 +37,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/edge_gemma_speak"
+Homepage = "https://github.com/yourusername/agentvox"
 
 [project.scripts]
-edge-gemma-speak = "edge_gemma_speak.cli:main"
+agentvox = "agentvox.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["edge_gemma_speak*"]
+include = ["agentvox*"]
 
 [tool.setuptools.package-data]
-edge_gemma_speak = ["*.gguf"]
+agentvox = ["*.gguf"]

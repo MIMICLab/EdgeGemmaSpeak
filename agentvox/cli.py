@@ -1,5 +1,5 @@
 """
-Command-line interface for edge_gemma_speak
+Command-line interface for agentvox
 """
 
 import argparse
@@ -14,7 +14,7 @@ def download_model():
     import sys
     import os
     
-    model_dir = Path.home() / ".edge_gemma_speak" / "models"
+    model_dir = Path.home() / ".agentvox" / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
     
     model_filename = "gemma-3-12b-it-Q4_K_M.gguf"
@@ -83,7 +83,7 @@ def download_model():
     
 
 def main():
-    parser = argparse.ArgumentParser(description="Edge Gemma Speak - Voice Assistant")
+    parser = argparse.ArgumentParser(description="AgentVox - Voice Assistant")
     parser.add_argument("--model", type=str, help="Path to GGUF model file")
     parser.add_argument("--stt-model", type=str, default="base", 
                        choices=["tiny", "base", "small", "medium", "large"],
@@ -207,13 +207,13 @@ def main():
             # Show total count
             print(f"\n\nTotal voices available: {len(voices)}")
             print("\nUsage examples:")
-            print("  edge-gemma-speak --voice ko-KR-InJoonNeural")
-            print("  edge-gemma-speak --voice en-US-JennyNeural")
-            print("  edge-gemma-speak --voice ja-JP-NanamiNeural")
+            print("  agentvox --voice ko-KR-InJoonNeural")
+            print("  agentvox --voice en-US-JennyNeural")
+            print("  agentvox --voice ja-JP-NanamiNeural")
             
             print("\nQuick presets:")
-            print("  edge-gemma-speak --voice male     (Korean male)")
-            print("  edge-gemma-speak --voice female   (Korean female)")
+            print("  agentvox --voice male     (Korean male)")
+            print("  agentvox --voice female   (Korean female)")
             
         except subprocess.CalledProcessError:
             print("Error: Could not fetch Edge-TTS voices.")
@@ -297,7 +297,7 @@ def main():
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print("\nTo download the model, run:")
-        print("  edge-gemma-speak --download-model")
+        print("  agentvox --download-model")
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nProgram interrupted by user.")

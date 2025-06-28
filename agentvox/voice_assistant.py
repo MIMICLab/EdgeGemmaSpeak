@@ -179,7 +179,7 @@ class LLMModule:
                 self.model_path = str(package_model_path)
             else:
                 # Check in user home directory
-                home_model_path = Path.home() / ".edge_gemma_speak" / "models" / model_filename
+                home_model_path = Path.home() / ".agentvox" / "models" / model_filename
                 if home_model_path.exists():
                     self.model_path = str(home_model_path)
                 else:

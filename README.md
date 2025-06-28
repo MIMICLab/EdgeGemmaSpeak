@@ -1,7 +1,7 @@
-# 🎙️ Edge Gemma Speak
-[![PyPI Status](https://badge.fury.io/py/edge-gemma-speak.svg)](https://badge.fury.io/py/edge-gemma-speak)
-[![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/MIMICLab/EdgeGemmaSpeak/blob/main/LICENSE)
-[![Downloads](https://pepy.tech/badge/edge-gemma-speak)](https://pepy.tech/project/edge-gemma-speak)
+# 🎙️ AgentVox
+[![PyPI Status](https://badge.fury.io/py/agentvox.svg)](https://badge.fury.io/py/agentvox)
+[![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/MIMICLab/AgentVox/blob/main/LICENSE)
+[![Downloads](https://pepy.tech/badge/agentvox)](https://pepy.tech/project/agentvox)
 
 Edge-based voice assistant using Gemma LLM with Speech-to-Text and Text-to-Speech capabilities
 
@@ -17,14 +17,14 @@ Edge-based voice assistant using Gemma LLM with Speech-to-Text and Text-to-Speec
 ### 1. Install via pip
 
 ```bash
-pip install edge-gemma-speak
+pip install agentvox
 ```
 
 Or install from source:
 
 ```bash
-git clone https://github.com/yourusername/edge_gemma_speak.git
-cd edge_gemma_speak
+git clone https://github.com/yourusername/agentvox.git
+cd agentvox
 pip install -e .
 ```
 
@@ -43,10 +43,10 @@ This will significantly improve LLM inference performance on NVIDIA GPUs.
 
 ```bash
 # Automatically download Gemma model (~7GB)
-edge-gemma-speak --download-model
+agentvox --download-model
 ```
 
-The model will be saved in `~/.edge_gemma_speak/models/` directory.
+The model will be saved in `~/.agentvox/models/` directory.
 
 ## Usage
 
@@ -54,7 +54,7 @@ The model will be saved in `~/.edge_gemma_speak/models/` directory.
 
 ```bash
 # Start voice conversation
-edge-gemma-speak
+agentvox
 ```
 
 Speak into your microphone and the AI will respond with voice.
@@ -63,17 +63,17 @@ Speak into your microphone and the AI will respond with voice.
 
 ```bash
 # List all available voices
-edge-gemma-speak --list-voices
+agentvox --list-voices
 
 # Use preset voices
-edge-gemma-speak --voice male       # Korean male voice
-edge-gemma-speak --voice female     # Korean female voice
-edge-gemma-speak --voice multilingual  # Korean multilingual male (default)
+agentvox --voice male       # Korean male voice
+agentvox --voice female     # Korean female voice
+agentvox --voice multilingual  # Korean multilingual male (default)
 
 # Use any Edge-TTS voice directly
-edge-gemma-speak --voice en-US-JennyNeural
-edge-gemma-speak --voice ja-JP-NanamiNeural
-edge-gemma-speak --voice zh-CN-XiaoxiaoNeural
+agentvox --voice en-US-JennyNeural
+agentvox --voice ja-JP-NanamiNeural
+agentvox --voice zh-CN-XiaoxiaoNeural
 ```
 
 ### Advanced Configuration
@@ -82,57 +82,57 @@ edge-gemma-speak --voice zh-CN-XiaoxiaoNeural
 
 ```bash
 # Recognize speech in different languages
-edge-gemma-speak --stt-language en
+agentvox --stt-language en
 
 # Increase beam size for more accurate recognition (default: 5)
-edge-gemma-speak --stt-beam-size 10
+agentvox --stt-beam-size 10
 
 # Adjust VAD sensitivity (default: 0.5)
-edge-gemma-speak --stt-vad-threshold 0.3
+agentvox --stt-vad-threshold 0.3
 
 # Adjust minimum speech duration in ms (default: 250)
-edge-gemma-speak --stt-vad-min-speech-duration 200
+agentvox --stt-vad-min-speech-duration 200
 
 # Adjust minimum silence duration in ms (default: 1000)
-edge-gemma-speak --stt-vad-min-silence-duration 800
+agentvox --stt-vad-min-silence-duration 800
 
 # Change Whisper model size (tiny, base, small, medium, large)
-edge-gemma-speak --stt-model small
+agentvox --stt-model small
 ```
 
 #### LLM (Language Model) Parameters
 
 ```bash
 # Generate longer responses (default: 512)
-edge-gemma-speak --llm-max-tokens 1024
+agentvox --llm-max-tokens 1024
 
 # More creative responses (higher temperature, default: 0.7)
-edge-gemma-speak --llm-temperature 0.9
+agentvox --llm-temperature 0.9
 
 # More conservative responses (lower temperature)
-edge-gemma-speak --llm-temperature 0.3
+agentvox --llm-temperature 0.3
 
 # Adjust context size (default: 4096)
-edge-gemma-speak --llm-context-size 8192
+agentvox --llm-context-size 8192
 
 # Adjust top-p sampling (default: 0.95)
-edge-gemma-speak --llm-top-p 0.9
+agentvox --llm-top-p 0.9
 ```
 
 #### Device Configuration
 
 ```bash
 # Auto-detect best available device (default)
-edge-gemma-speak
+agentvox
 
 # Explicitly use CPU
-edge-gemma-speak --device cpu
+agentvox --device cpu
 
 # Explicitly use CUDA GPU
-edge-gemma-speak --device cuda
+agentvox --device cuda
 
 # Explicitly use Apple Silicon MPS
-edge-gemma-speak --device mps
+agentvox --device mps
 ```
 
 The system automatically detects the best available device:
@@ -144,19 +144,19 @@ The system automatically detects the best available device:
 
 ```bash
 # English female voice + English recognition + longer responses
-edge-gemma-speak --voice en-US-JennyNeural --stt-language en --llm-max-tokens 1024
+agentvox --voice en-US-JennyNeural --stt-language en --llm-max-tokens 1024
 
 # Japanese voice + high accuracy STT + creative responses
-edge-gemma-speak --voice ja-JP-NanamiNeural --stt-beam-size 10 --llm-temperature 0.9
+agentvox --voice ja-JP-NanamiNeural --stt-beam-size 10 --llm-temperature 0.9
 
 # Use custom model path
-edge-gemma-speak --model /path/to/your/model.gguf
+agentvox --model /path/to/your/model.gguf
 ```
 
 ## Python API Usage
 
 ```python
-from edge_gemma_speak import VoiceAssistant, ModelConfig, AudioConfig
+from agentvox import VoiceAssistant, ModelConfig, AudioConfig
 
 # Configuration
 model_config = ModelConfig(
@@ -177,7 +177,7 @@ assistant.run_conversation_loop()
 ### Using Individual Modules
 
 ```python
-from edge_gemma_speak import STTModule, LLMModule, TTSModule, ModelConfig
+from agentvox import STTModule, LLMModule, TTSModule, ModelConfig
 
 config = ModelConfig()
 
@@ -223,8 +223,8 @@ tts.speak(response)
 ## Project Structure
 
 ```
-edge_gemma_speak/
-├── edge_gemma_speak/              # Package directory
+agentvox/
+├── agentvox/              # Package directory
 │   ├── __init__.py               # Package initialization
 │   ├── voice_assistant.py        # Main module
 │   └── cli.py                    # CLI interface
@@ -276,11 +276,11 @@ For large LLM models:
 
 ```bash
 # Download model
-edge-gemma-speak --download-model
+agentvox --download-model
 
 # Or download directly
 wget https://huggingface.co/tgisaturday/Docsray/resolve/main/gemma-3-12b-it-GGUF/gemma-3-12b-it-Q4_K_M.gguf \
-  -O ~/.edge_gemma_speak/models/gemma-3-12b-it-Q4_K_M.gguf
+  -O ~/.agentvox/models/gemma-3-12b-it-Q4_K_M.gguf
 ```
 
 ## Performance Optimization
@@ -325,8 +325,8 @@ Issues and Pull Requests are always welcome!
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/edge_gemma_speak.git
-cd edge_gemma_speak
+git clone https://github.com/yourusername/agentvox.git
+cd agentvox
 
 # Install in development mode
 pip install -e .
