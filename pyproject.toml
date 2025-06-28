@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edge_gemma_speak"
+version = "0.1.0"
+description = "Edge-based voice assistant using Gemma LLM with STT and TTS capabilities"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "MimicLab, Sogang University"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "numpy",
+    "SpeechRecognition",
+    "faster-whisper",
+    "llama-cpp-python",
+    "edge-tts",
+    "pygame",
+    "sounddevice",
+    "soundfile",
+    "gradio",
+    "flask",
+    "pyaudio",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/edge_gemma_speak"
+
+[project.scripts]
+edge-gemma-speak = "edge_gemma_speak.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["edge_gemma_speak*"]
+
+[tool.setuptools.package-data]
+edge_gemma_speak = ["*.gguf"]

@@ -1,0 +1,7 @@
+include README.md
+include requirements.txt
+recursive-include edge_gemma_speak *.py
+recursive-include edge_gemma_speak/models *.gguf
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store

@@ -1,0 +1,12 @@
+torch>=2.0.0
+numpy
+SpeechRecognition
+faster-whisper
+llama-cpp-python
+edge-tts
+pygame
+sounddevice
+soundfile
+gradio
+flask
+pyaudio
