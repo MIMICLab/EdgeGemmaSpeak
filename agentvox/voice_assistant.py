@@ -75,7 +75,10 @@ class ModelConfig:
     stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
     # TTS detailed settings
+    tts_engine: str = "edge"  # TTS engine: edge, zonos, or cosyvoice
     tts_voice: str = "ko-KR-HyunsuMultilingualNeural"
+    tts_speaker_audio: Optional[str] = None  # Path to speaker audio for Zonos
+    tts_cosyvoice_prompt: Optional[str] = None  # Path to prompt audio for CosyVoice
     
     # LLM detailed settings
     llm_max_tokens: int = 512
@@ -507,7 +510,29 @@ class VoiceAssistant:
             
         self.stt = STTModule(model_config)
         self.llm = LLMModule(model_config)
-        self.tts = TTSModule(model_config)
+        
+        # Initialize TTS based on selected engine
+        if model_config.tts_engine == "zonos":
+            try:
+                from .zonos_tts import ZonosTTS
+                self.tts = ZonosTTS(model_config)
+                print("Using Zonos TTS engine")
+            except ImportError as e:
+                print(f"Failed to load Zonos: {e}")
+                print("Falling back to EdgeTTS")
+                self.tts = TTSModule(model_config)
+        elif model_config.tts_engine == "cosyvoice":
+            try:
+                from .cosyvoice_tts import CosyVoiceTTS
+                self.tts = CosyVoiceTTS(model_config)
+                print("Using CosyVoice TTS engine")
+            except ImportError as e:
+                print(f"Failed to load CosyVoice: {e}")
+                print("Falling back to EdgeTTS")
+                self.tts = TTSModule(model_config)
+        else:
+            self.tts = TTSModule(model_config)
+            print("Using EdgeTTS engine")
         
         # Initialize audio recorder
         self.recognizer = sr.Recognizer()
