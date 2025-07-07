@@ -33,6 +33,7 @@ conformer==0.3.2
 # LLM & NLP
 llama-cpp-python
 transformers==4.40.1
+peft
 
 # UI & Web Framework
 gradio==5.4.0

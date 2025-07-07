@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Optional
 import warnings
 import io
+import logging
+
+# Configure logging to suppress INFO and DEBUG messages
+logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger('zonos').setLevel(logging.WARNING)
+logging.getLogger('matcha').setLevel(logging.WARNING)
+logging.getLogger('torch').setLevel(logging.WARNING)
 
 # Add Zonos path
 ZONOS_PATH = Path(__file__).parent.parent / "third_party" / "Zonos"

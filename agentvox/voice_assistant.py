@@ -11,6 +11,19 @@ import re
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
+import logging
+
+# Configure logging to suppress INFO and DEBUG messages
+logging.getLogger().setLevel(logging.WARNING)
+# Specifically suppress common noisy loggers
+logging.getLogger('cosyvoice').setLevel(logging.WARNING)
+logging.getLogger('matcha').setLevel(logging.WARNING)
+logging.getLogger('hf-internal-testing').setLevel(logging.WARNING)
+logging.getLogger('transformers').setLevel(logging.WARNING)
+logging.getLogger('torch').setLevel(logging.WARNING)
+logging.getLogger('faster_whisper').setLevel(logging.WARNING)
+logging.getLogger('numba').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 # PyTorch 2.6 security settings
 import warnings

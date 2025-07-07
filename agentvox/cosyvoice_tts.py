@@ -11,6 +11,13 @@ import re
 from pathlib import Path
 from typing import Optional, Generator
 import warnings
+import logging
+
+# Configure logging to suppress INFO and DEBUG messages
+logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger('cosyvoice').setLevel(logging.WARNING)
+logging.getLogger('matcha').setLevel(logging.WARNING)
+logging.getLogger('torch').setLevel(logging.WARNING)
 
 try:
     import edge_tts
@@ -25,10 +32,20 @@ if COSYVOICE_PATH.exists():
     sys.path.append(str(COSYVOICE_PATH / "third_party" / "Matcha-TTS"))
 
 try:
+    # Override CosyVoice's logging configuration before importing
+    import logging
+    logging.basicConfig(level=logging.WARNING, format='%(asctime)s %(levelname)s %(message)s', force=True)
+    
     import torch
     import torchaudio
     from cosyvoice.cli.cosyvoice import CosyVoice2
     from cosyvoice.utils.file_utils import load_wav
+    
+    # Re-apply logging configuration after import to override CosyVoice's settings
+    logging.getLogger().setLevel(logging.WARNING)
+    for logger_name in logging.root.manager.loggerDict:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    
     COSYVOICE_AVAILABLE = True
 except ImportError:
     COSYVOICE_AVAILABLE = False
@@ -55,7 +72,7 @@ class CosyVoiceTTS:
             load_jit=False,
             load_trt=False,
             load_vllm=False,
-            fp16=True,
+            fp16=False,
         )
         print("✓ CosyVoice model loaded")
         
