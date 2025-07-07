@@ -1,82 +1,12 @@
-# Build dependencies (install first)
-Cython
+torch>=2.0.0
 numpy
-setuptools>=60.0.0
-wheel
-
-# Core dependencies
-torch
-torchaudio
-torchvision
-torchmetrics
-scipy
-pandas
-matplotlib==3.7.5
-seaborn
-tensorboard
-
-# Speech Recognition & Audio Processing
 SpeechRecognition
 faster-whisper
-openai-whisper==20231117
-sounddevice
-soundfile==0.12.1
-pyaudio
-librosa==0.10.2
-pyworld==0.3.4
-phonemizer
-
-# TTS & Voice
-edge-tts
-conformer==0.3.2
-
-# LLM & NLP
 llama-cpp-python
-transformers==4.40.1
-peft
-
-# UI & Web Framework
-gradio==5.4.0
-flask
-fastapi==0.115.6
-fastapi-cli==0.0.4
-uvicorn==0.30.0
+edge-tts
 pygame
-notebook
-ipywidgets
-
-# ML Infrastructure
-lightning==2.2.4
-deepspeed==0.14.2; sys_platform == 'linux'
-diffusers==0.29.0
-modelscope==1.15.0
-onnx==1.16.0
-onnxruntime-gpu==1.18.0; sys_platform == 'linux'
-onnxruntime==1.18.0; sys_platform == 'darwin' or sys_platform == 'win32'
-
-# Configuration & Utilities
-hydra-core==1.3.2
-hydra-colorlog==1.2.0
-hydra-optuna-sweeper==1.2.0
-HyperPyYAML==1.2.2
-omegaconf==2.3.0
-pydantic==2.7.0
-protobuf==4.25
-
-# Development & General Utilities
-grpcio>=1.59.0
-grpcio-tools>=1.59.0
-inflect==7.3.1
-networkx==3.1
-rich==13.7.1
-wget==3.2
-gdown==5.1.0
-rootutils
-pre-commit
-pytest
-einops
-Unidecode
-
-# Extra index URLs (add these to pip install command)
-# --extra-index-url https://download.pytorch.org/whl/cu121
-# --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+sounddevice
+soundfile
+gradio
+flask
+pyaudio

@@ -11,19 +11,6 @@ import re
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
-import logging
-
-# Configure logging to suppress INFO and DEBUG messages
-logging.getLogger().setLevel(logging.WARNING)
-# Specifically suppress common noisy loggers
-logging.getLogger('cosyvoice').setLevel(logging.WARNING)
-logging.getLogger('matcha').setLevel(logging.WARNING)
-logging.getLogger('hf-internal-testing').setLevel(logging.WARNING)
-logging.getLogger('transformers').setLevel(logging.WARNING)
-logging.getLogger('torch').setLevel(logging.WARNING)
-logging.getLogger('faster_whisper').setLevel(logging.WARNING)
-logging.getLogger('numba').setLevel(logging.WARNING)
-logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 # PyTorch 2.6 security settings
 import warnings
@@ -88,10 +75,7 @@ class ModelConfig:
     stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
     # TTS detailed settings
-    tts_engine: str = "edge"  # TTS engine: edge, zonos, or cosyvoice
     tts_voice: str = "ko-KR-HyunsuMultilingualNeural"
-    tts_speaker_audio: Optional[str] = None  # Path to speaker audio for Zonos
-    tts_cosyvoice_prompt: Optional[str] = None  # Path to prompt audio for CosyVoice
     
     # LLM detailed settings
     llm_max_tokens: int = 512
@@ -523,29 +507,7 @@ class VoiceAssistant:
             
         self.stt = STTModule(model_config)
         self.llm = LLMModule(model_config)
-        
-        # Initialize TTS based on selected engine
-        if model_config.tts_engine == "zonos":
-            try:
-                from .zonos_tts import ZonosTTS
-                self.tts = ZonosTTS(model_config)
-                print("Using Zonos TTS engine")
-            except ImportError as e:
-                print(f"Failed to load Zonos: {e}")
-                print("Falling back to EdgeTTS")
-                self.tts = TTSModule(model_config)
-        elif model_config.tts_engine == "cosyvoice":
-            try:
-                from .cosyvoice_tts import CosyVoiceTTS
-                self.tts = CosyVoiceTTS(model_config)
-                print("Using CosyVoice TTS engine")
-            except ImportError as e:
-                print(f"Failed to load CosyVoice: {e}")
-                print("Falling back to EdgeTTS")
-                self.tts = TTSModule(model_config)
-        else:
-            self.tts = TTSModule(model_config)
-            print("Using EdgeTTS engine")
+        self.tts = TTSModule(model_config)
         
         # Initialize audio recorder
         self.recognizer = sr.Recognizer()
@@ -674,7 +636,6 @@ class VoiceAssistant:
                 
                 # Process normal conversation
                 response = self.process_conversation(user_input)
-                response = response.split(':')[-1].strip()  # Remove prefix if exists
                 if is_korean:
                     print(f"어시스턴트: {response}")
                 else:

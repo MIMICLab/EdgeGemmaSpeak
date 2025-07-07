@@ -91,21 +91,10 @@ def main():
     parser.add_argument("--device", type=str, default=None,
                        choices=["cpu", "cuda", "mps", "auto"],
                        help="Device to use for inference (default: auto-detect)")
-    parser.add_argument("--tts", type=str, default="edge",
-                       choices=["edge", "zonos", "cosyvoice"],
-                       help="TTS engine to use (default: edge)")
     parser.add_argument("--voice", type=str, default="multilingual",
                        help="TTS voice: use preset (male/female/multilingual) or any Edge-TTS voice name")
-    parser.add_argument("--speaker-audio", type=str, default=None,
-                       help="Path to speaker audio file (MP3/WAV) for Zonos voice cloning")
-    parser.add_argument("--cosyvoice-prompt", type=str, default=None,
-                       help="Path to prompt audio file (WAV) for CosyVoice zero-shot synthesis")
     parser.add_argument("--download-model", action="store_true",
                        help="Download the default Gemma model")
-    parser.add_argument("--install-zonos", action="store_true",
-                       help="Install Zonos TTS engine")
-    parser.add_argument("--install-cosyvoice", action="store_true",
-                       help="Install CosyVoice TTS engine")
     parser.add_argument("--list-voices", action="store_true",
                        help="List all available Korean TTS voices")
     
@@ -137,42 +126,6 @@ def main():
     
     if args.download_model:
         download_model()
-        sys.exit(0)
-    
-    if args.install_zonos:
-        import subprocess
-        import os
-        
-        script_path = Path(__file__).parent.parent / "install_zonos.sh"
-        if not script_path.exists():
-            print(f"Error: Installation script not found at {script_path}")
-            sys.exit(1)
-        
-        print("Installing Zonos TTS engine...")
-        try:
-            subprocess.run(["bash", str(script_path)], check=True)
-            print("\n✓ Zonos installation completed successfully!")
-        except subprocess.CalledProcessError as e:
-            print(f"\n✗ Installation failed with error: {e}")
-            sys.exit(1)
-        sys.exit(0)
-    
-    if args.install_cosyvoice:
-        import subprocess
-        import os
-        
-        script_path = Path(__file__).parent.parent / "install_cosyvoice.sh"
-        if not script_path.exists():
-            print(f"Error: Installation script not found at {script_path}")
-            sys.exit(1)
-        
-        print("Installing CosyVoice TTS engine...")
-        try:
-            subprocess.run(["bash", str(script_path)], check=True)
-            print("\n✓ CosyVoice installation completed successfully!")
-        except subprocess.CalledProcessError as e:
-            print(f"\n✗ Installation failed with error: {e}")
-            sys.exit(1)
         sys.exit(0)
     
     if args.list_voices:
@@ -322,10 +275,7 @@ def main():
         stt_vad_min_speech_duration_ms=args.stt_vad_min_speech_duration,
         stt_vad_min_silence_duration_ms=args.stt_vad_min_silence_duration,
         # TTS parameters
-        tts_engine=args.tts,
         tts_voice=tts_voice,
-        tts_speaker_audio=args.speaker_audio,
-        tts_cosyvoice_prompt=args.cosyvoice_prompt,
         # LLM parameters
         llm_max_tokens=args.llm_max_tokens,
         llm_temperature=args.llm_temperature,
