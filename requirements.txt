@@ -1,4 +1,4 @@
-torch>=2.0.0
+torch
 numpy
 SpeechRecognition
 faster-whisper
@@ -10,3 +10,4 @@ soundfile
 gradio
 flask
 pyaudio
+coqui-tts

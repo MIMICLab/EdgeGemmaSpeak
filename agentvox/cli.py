@@ -93,10 +93,19 @@ def main():
                        help="Device to use for inference (default: auto-detect)")
     parser.add_argument("--voice", type=str, default="multilingual",
                        help="TTS voice: use preset (male/female/multilingual) or any Edge-TTS voice name")
+    parser.add_argument("--tts-engine", type=str, default="edge",
+                       choices=["edge", "coqui"],
+                       help="TTS engine to use (default: edge)")
+    parser.add_argument("--coqui-model", type=str, default="voice_conversion_models/multilingual/multi-dataset/openvoice_v2",
+                       help="Coqui TTS model to use")
+    parser.add_argument("--speaker-wav", type=str, default=None,
+                       help="Speaker voice sample file for voice cloning (Coqui only)")
     parser.add_argument("--download-model", action="store_true",
                        help="Download the default Gemma model")
     parser.add_argument("--list-voices", action="store_true",
                        help="List all available Korean TTS voices")
+    parser.add_argument("--list-tts-models", action="store_true",
+                       help="List all available Coqui TTS models")
     
     # STT 파라미터
     parser.add_argument("--stt-language", type=str, default="ko",
@@ -126,6 +135,68 @@ def main():
     
     if args.download_model:
         download_model()
+        sys.exit(0)
+    
+    if args.list_tts_models:
+        # Import locally to avoid loading TTS unless needed
+        from .voice_assistant import CoquiTTSModule
+        
+        print("\nFetching available Coqui TTS models...")
+        print("=" * 80)
+        
+        try:
+            models = CoquiTTSModule.list_models()
+            
+            # Organize models by type
+            multilingual_models = []
+            single_lang_models = []
+            vocoder_models = []
+            
+            for model in models:
+                if "vocoder" in model:
+                    vocoder_models.append(model)
+                elif "multilingual" in model or "multi-dataset" in model:
+                    multilingual_models.append(model)
+                else:
+                    single_lang_models.append(model)
+            
+            # Display models by category
+            if multilingual_models:
+                print("\n[Multilingual Models - Support voice cloning]")
+                for model in multilingual_models:
+                    print(f"  {model}")
+            
+            if single_lang_models:
+                print("\n[Single Language Models]")
+                # Group by language
+                lang_models = {}
+                for model in single_lang_models:
+                    parts = model.split('/')
+                    if len(parts) >= 2:
+                        lang = parts[1]
+                        if lang not in lang_models:
+                            lang_models[lang] = []
+                        lang_models[lang].append(model)
+                
+                for lang, models in sorted(lang_models.items()):
+                    print(f"\n  {lang.upper()}:")
+                    for model in models[:5]:  # Show first 5 per language
+                        print(f"    {model}")
+                    if len(models) > 5:
+                        print(f"    ... and {len(models) - 5} more")
+            
+            print(f"\n\nTotal models available: {len(models)}")
+            print("\nUsage examples:")
+            print("  agentvox --tts-engine coqui --coqui-model tts_models/multilingual/multi-dataset/xtts_v2")
+            print("  agentvox --tts-engine coqui --coqui-model tts_models/en/ljspeech/tacotron2-DDC")
+            print("\nVoice cloning example:")
+            print("  agentvox --tts-engine coqui --speaker-wav path/to/voice_sample.wav")
+            
+        except Exception as e:
+            print(f"Error fetching TTS models: {e}")
+            print("Make sure TTS is installed: pip install TTS")
+            
+        print("=" * 80)
         sys.exit(0)
     
     if args.list_voices:
@@ -275,7 +346,10 @@ def main():
         stt_vad_min_speech_duration_ms=args.stt_vad_min_speech_duration,
         stt_vad_min_silence_duration_ms=args.stt_vad_min_silence_duration,
         # TTS parameters
+        tts_engine=args.tts_engine,
         tts_voice=tts_voice,
+        coqui_model=args.coqui_model,
+        speaker_wav=args.speaker_wav,
         # LLM parameters
         llm_max_tokens=args.llm_max_tokens,
         llm_temperature=args.llm_temperature,

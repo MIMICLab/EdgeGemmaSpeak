@@ -22,12 +22,13 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
-    "torch>=2.0.0",
+    "torch",
     "numpy",
     "SpeechRecognition",
     "faster-whisper",
     "llama-cpp-python",
     "edge-tts",
+    "coqui-tts",
     "pygame",
     "sounddevice",
     "soundfile",

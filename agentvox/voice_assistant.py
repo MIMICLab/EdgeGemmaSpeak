@@ -8,7 +8,7 @@ import json
 import torch
 import numpy as np
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +41,7 @@ from contextlib import redirect_stderr
 
 # Libraries for TTS
 import edge_tts
+from TTS.api import TTS
 import pygame
 import sounddevice as sd
 import soundfile as sf
@@ -75,7 +76,10 @@ class ModelConfig:
     stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
     # TTS detailed settings
-    tts_voice: str = "ko-KR-HyunsuMultilingualNeural"
+    tts_engine: str = "edge"  # TTS engine: edge or coqui
+    tts_voice: str = "ko-KR-HyunsuMultilingualNeural"  # For edge-tts
+    coqui_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # For Coqui TTS
+    speaker_wav: Optional[str] = None  # Voice cloning source file
     
     # LLM detailed settings
     llm_max_tokens: int = 512
@@ -490,6 +494,110 @@ class TTSModule:
         else:
             self.voice = "ko-KR-HyunsuMultilingualNeural"  # default
 
+
+class CoquiTTSModule:
+    """TTS module using Coqui TTS with voice cloning support"""
+    
+    def __init__(self, config: ModelConfig):
+        self.config = config
+        self.device = config.device
+        
+        # Initialize TTS model
+        self.tts = TTS(model_name=config.coqui_model).to(self.device)
+        
+        # Initialize pygame audio
+        pygame.mixer.init()
+        
+    @staticmethod
+    def list_models() -> List[str]:
+        """List all available TTS models"""
+        tts = TTS()
+        return tts.list_models()
+    
+    def synthesize(self, text: str, output_path: str = "output.wav", speaker_wav: str = None) -> str:
+        """Convert text to speech file
+        
+        Args:
+            text: Text to convert
+            output_path: Output audio file path
+            speaker_wav: Speaker voice sample file path for voice cloning
+        """
+        # Check for empty text
+        if not text or not text.strip():
+            text = "No text provided"
+            
+        # Use provided speaker_wav or config default
+        speaker_file = speaker_wav or self.config.speaker_wav
+        
+        # Use STT language setting for TTS
+        language = self.config.stt_language
+        
+        try:
+            if speaker_file and os.path.exists(speaker_file):
+                # Voice cloning mode
+                if hasattr(self.tts, 'tts_with_vc_to_file'):
+                    # For models that support voice conversion
+                    self.tts.tts_with_vc_to_file(
+                        text=text,
+                        speaker_wav=speaker_file,
+                        file_path=output_path
+                    )
+                else:
+                    # For multilingual models with speaker_wav
+                    self.tts.tts_to_file(
+                        text=text,
+                        speaker_wav=speaker_file,
+                        language=language,
+                        file_path=output_path
+                    )
+            else:
+                # Standard TTS without voice cloning
+                self.tts.tts_to_file(
+                    text=text,
+                    language=language,
+                    file_path=output_path
+                )
+            return output_path
+            
+        except Exception as e:
+            print(f"Coqui TTS error: {e}")
+            raise
+    
+    def speak(self, text: str):
+        """Convert text to speech and play"""
+        # Check for empty text
+        if not text or not text.strip():
+            print("Warning: Empty text - TTS skipped")
+            return
+            
+        try:
+            output_path = "temp_speech.wav"
+            self.synthesize(text, output_path)
+            
+            # Use afplay on macOS
+            if platform.system() == "Darwin":
+                subprocess.call(["afplay", output_path])
+            else:
+                # Use pygame on other OS
+                pygame.mixer.music.load(output_path)
+                pygame.mixer.music.play()
+                
+                # Wait until playback finishes
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
+                    
+            # Delete temporary file
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                
+        except Exception as e:
+            print(f"TTS playback error: {e}")
+            # Continue program execution even if error occurs
+    
+    def speak_streaming(self, text: str):
+        """For compatibility with EdgeTTS interface - uses non-streaming speak"""
+        self.speak(text)
+
 class VoiceAssistant:
     """Main class for managing the entire voice conversation system"""
     
@@ -507,7 +615,12 @@ class VoiceAssistant:
             
         self.stt = STTModule(model_config)
         self.llm = LLMModule(model_config)
-        self.tts = TTSModule(model_config)
+        
+        # Initialize TTS based on selected engine
+        if model_config.tts_engine == "coqui":
+            self.tts = CoquiTTSModule(model_config)
+        else:
+            self.tts = TTSModule(model_config)
         
         # Initialize audio recorder
         self.recognizer = sr.Recognizer()
@@ -579,9 +692,13 @@ class VoiceAssistant:
         if is_korean:
             print("음성 대화 시스템이 시작되었습니다.")
             print("명령어: '종료' - 프로그램 종료, '초기화' - 대화 내용 초기화, '대화 내역' - 대화 히스토리 확인")
+            if self.model_config.tts_engine == "coqui":
+                print("        'TTS 모델' - 사용 가능한 TTS 모델 목록 보기")
         else:
             print("Voice conversation system started.")
             print("Commands: 'exit' - Exit program, 'reset' - Reset conversation, 'history' - View conversation history")
+            if self.model_config.tts_engine == "coqui":
+                print("         'tts models' - List available TTS models")
         print("-" * 50)
         
         while True:
@@ -632,6 +749,30 @@ class VoiceAssistant:
                         self.tts.speak_streaming(f"현재 {len(self.llm.conversation_history)}개의 대화가 기록되어 있습니다.")
                     else:
                         self.tts.speak_streaming(f"Currently {len(self.llm.conversation_history)} conversations are recorded.")
+                    continue
+                elif ("tts model" in user_input.lower() or "TTS 모델" in user_input) and self.model_config.tts_engine == "coqui":
+                    # List available TTS models
+                    try:
+                        models = CoquiTTSModule.list_models()
+                        if is_korean:
+                            print("\n=== 사용 가능한 TTS 모델 ===")
+                            for i, model in enumerate(models):
+                                print(f"{i+1}. {model}")
+                            print("==========================")
+                            self.tts.speak_streaming(f"{len(models)}개의 TTS 모델을 사용할 수 있습니다.")
+                        else:
+                            print("\n=== Available TTS Models ===")
+                            for i, model in enumerate(models):
+                                print(f"{i+1}. {model}")
+                            print("==========================")
+                            self.tts.speak_streaming(f"{len(models)} TTS models are available.")
+                    except Exception as e:
+                        if is_korean:
+                            print(f"모델 목록을 가져오는 중 오류 발생: {e}")
+                            self.tts.speak_streaming("모델 목록을 가져올 수 없습니다.")
+                        else:
+                            print(f"Error fetching model list: {e}")
+                            self.tts.speak_streaming("Unable to fetch model list.")
                     continue
                 
                 # Process normal conversation
