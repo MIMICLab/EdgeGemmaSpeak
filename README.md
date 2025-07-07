@@ -44,6 +44,10 @@ This will significantly improve LLM inference performance on NVIDIA GPUs.
 ```bash
 # Automatically download Gemma model (~7GB)
 agentvox --download-model
+
+# Install TTS engines (optional)
+agentvox --install-zonos      # Install Zonos TTS for voice cloning
+agentvox --install-cosyvoice  # Install CosyVoice TTS
 ```
 
 The model will be saved in `~/.agentvox/models/` directory.
@@ -53,8 +57,13 @@ The model will be saved in `~/.agentvox/models/` directory.
 ### Basic Usage
 
 ```bash
-# Start voice conversation
+# Start voice conversation with default settings (Edge TTS)
 agentvox
+
+# Use different TTS engines
+agentvox --tts edge       # Microsoft Edge TTS (default, fast)
+agentvox --tts zonos      # Zonos TTS (voice cloning support)
+agentvox --tts cosyvoice  # CosyVoice TTS (high quality)
 ```
 
 Speak into your microphone and the AI will respond with voice.
@@ -74,6 +83,12 @@ agentvox --voice multilingual  # Korean multilingual male (default)
 agentvox --voice en-US-JennyNeural
 agentvox --voice ja-JP-NanamiNeural
 agentvox --voice zh-CN-XiaoxiaoNeural
+
+# Voice cloning with Zonos TTS
+agentvox --tts zonos --speaker-audio /path/to/speaker.mp3
+
+# Zero-shot voice synthesis with CosyVoice
+agentvox --tts cosyvoice --cosyvoice-prompt /path/to/prompt.wav
 ```
 
 ### Advanced Configuration
@@ -81,8 +96,10 @@ agentvox --voice zh-CN-XiaoxiaoNeural
 #### STT (Speech Recognition) Parameters
 
 ```bash
-# Recognize speech in different languages
+# Recognize speech in different languages (default: ko)
 agentvox --stt-language en
+agentvox --stt-language ja
+agentvox --stt-language zh
 
 # Increase beam size for more accurate recognition (default: 5)
 agentvox --stt-beam-size 10
@@ -90,14 +107,21 @@ agentvox --stt-beam-size 10
 # Adjust VAD sensitivity (default: 0.5)
 agentvox --stt-vad-threshold 0.3
 
+# Adjust temperature for STT sampling (default: 0.0)
+agentvox --stt-temperature 0.2
+
 # Adjust minimum speech duration in ms (default: 250)
 agentvox --stt-vad-min-speech-duration 200
 
 # Adjust minimum silence duration in ms (default: 1000)
 agentvox --stt-vad-min-silence-duration 800
 
-# Change Whisper model size (tiny, base, small, medium, large)
-agentvox --stt-model small
+# Change Whisper model size (default: base)
+agentvox --stt-model tiny    # Fastest, least accurate
+agentvox --stt-model base    # Good balance (default)
+agentvox --stt-model small   # Better accuracy
+agentvox --stt-model medium  # High accuracy
+agentvox --stt-model large   # Best accuracy, slowest
 ```
 
 #### LLM (Language Model) Parameters
@@ -117,6 +141,9 @@ agentvox --llm-context-size 8192
 
 # Adjust top-p sampling (default: 0.95)
 agentvox --llm-top-p 0.9
+
+# Adjust context window size (default: 4096)
+agentvox --llm-context-size 8192
 ```
 
 #### Device Configuration
@@ -149,6 +176,12 @@ agentvox --voice en-US-JennyNeural --stt-language en --llm-max-tokens 1024
 # Japanese voice + high accuracy STT + creative responses
 agentvox --voice ja-JP-NanamiNeural --stt-beam-size 10 --llm-temperature 0.9
 
+# Zonos TTS with voice cloning + fast STT + concise responses
+agentvox --tts zonos --speaker-audio voice.mp3 --stt-model tiny --llm-max-tokens 256
+
+# CosyVoice TTS + multilingual recognition
+agentvox --tts cosyvoice --cosyvoice-prompt prompt.wav --stt-language auto
+
 # Use custom model path
 agentvox --model /path/to/your/model.gguf
 ```
@@ -162,7 +195,10 @@ from agentvox import VoiceAssistant, ModelConfig, AudioConfig
 model_config = ModelConfig(
     stt_model="base",
     llm_temperature=0.7,
-    tts_voice="en-US-JennyNeural"  # English female voice
+    tts_engine="edge",  # or "zonos", "cosyvoice"
+    tts_voice="en-US-JennyNeural",  # English female voice
+    speaker_audio="/path/to/speaker.mp3",  # For Zonos
+    cosyvoice_prompt="/path/to/prompt.wav"  # For CosyVoice
 )
 
 audio_config = AudioConfig()
@@ -192,6 +228,21 @@ response = llm.generate_response(text)
 # TTS (Text to Speech)
 tts = TTSModule(config)
 tts.speak(response)
+
+# Or use specific TTS engine
+from agentvox.tts import EdgeTTS, ZonosTTS, CosyVoiceTTS
+
+# Edge TTS
+edge_tts = EdgeTTS(config)
+edge_tts.speak("Hello world")
+
+# Zonos TTS with voice cloning
+zonos_tts = ZonosTTS(config)
+zonos_tts.speak("Hello world")
+
+# CosyVoice TTS
+cosyvoice_tts = CosyVoiceTTS(config)
+cosyvoice_tts.speak("Hello world")
 ```
 
 ## Available Commands During Conversation
@@ -209,7 +260,9 @@ tts.speak(response)
 
 ### Required Packages
 
-- torch >= 2.0.0
+Core packages are automatically installed with `pip install agentvox`:
+
+- torch >= 2.3.1
 - faster-whisper
 - llama-cpp-python
 - edge-tts
@@ -219,6 +272,10 @@ tts.speak(response)
 - sounddevice
 - soundfile
 - pyaudio
+
+Optional TTS engines require additional setup:
+- **Zonos**: Run `agentvox --install-zonos`
+- **CosyVoice**: Run `agentvox --install-cosyvoice`
 
 ## Project Structure
 

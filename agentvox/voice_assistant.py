@@ -661,6 +661,7 @@ class VoiceAssistant:
                 
                 # Process normal conversation
                 response = self.process_conversation(user_input)
+                response = response.split(':')[-1].strip()  # Remove prefix if exists
                 if is_korean:
                     print(f"어시스턴트: {response}")
                 else:

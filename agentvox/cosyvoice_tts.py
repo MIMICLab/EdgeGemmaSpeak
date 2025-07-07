@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Optional, Generator
 import warnings
 
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
+
 # Add CosyVoice path
 COSYVOICE_PATH = Path(__file__).parent.parent / "third_party" / "CosyVoice"
 if COSYVOICE_PATH.exists():
@@ -49,20 +55,20 @@ class CosyVoiceTTS:
             load_jit=False,
             load_trt=False,
             load_vllm=False,
-            fp16=False
+            fp16=True,
         )
         print("✓ CosyVoice model loaded")
         
         # Load prompt audio
         self.prompt_speech = None
-        self.prompt_text = "希望你以后能够做的比我还好呦。"  # Default prompt text
+        self.prompt_text = "I hope you will do better than me in the future."  # Default prompt text in English
         self._load_prompt_audio()
         
         # Initialize pygame for audio playback
         pygame.mixer.init()
         
     def _load_prompt_audio(self):
-        """Load prompt audio from file or default"""
+        """Load prompt audio from file or generate with EdgeTTS"""
         if hasattr(self.config, 'tts_cosyvoice_prompt') and self.config.tts_cosyvoice_prompt:
             prompt_path = Path(self.config.tts_cosyvoice_prompt)
             if prompt_path.exists():
@@ -72,13 +78,57 @@ class CosyVoiceTTS:
             else:
                 print(f"Warning: Prompt audio file not found: {prompt_path}")
         
-        # Try default prompt
-        default_prompt = COSYVOICE_PATH / "asset" / "zero_shot_prompt.wav"
-        if default_prompt.exists():
-            print(f"Loading default prompt audio from {default_prompt}")
-            self.prompt_speech = load_wav(str(default_prompt), 16000)
+        # Generate default prompt audio using EdgeTTS
+        if EDGE_TTS_AVAILABLE:
+            self._generate_default_prompt()
         else:
-            print("Warning: No prompt audio found. Using instruct mode instead.")
+            print("Warning: EdgeTTS not available and no prompt audio provided. Using instruct mode.")
+    
+    def _generate_default_prompt(self):
+        """Generate default prompt audio using EdgeTTS"""
+        # Create temporary directory for prompt audio
+        prompt_dir = Path.home() / ".agentvox" / "prompts"
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Use configured voice or default
+        voice = getattr(self.config, 'tts_voice', 'en-US-JennyNeural')
+        prompt_file = prompt_dir / f"{voice}_prompt.wav"
+        
+        if not prompt_file.exists():
+            print(f"Generating prompt audio with voice: {voice}")
+            
+            # Generate prompt audio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                communicate = edge_tts.Communicate(self.prompt_text, voice)
+                # First save as mp3
+                mp3_file = prompt_file.with_suffix('.mp3')
+                loop.run_until_complete(communicate.save(str(mp3_file)))
+                
+                # Convert mp3 to wav using pydub or ffmpeg
+                if platform.system() == "Darwin":
+                    # macOS: use afconvert
+                    subprocess.call(["afconvert", "-f", "WAVE", "-d", "LEI16", str(mp3_file), str(prompt_file)])
+                else:
+                    # Try ffmpeg
+                    subprocess.call(["ffmpeg", "-i", str(mp3_file), "-ar", "16000", "-ac", "1", str(prompt_file)])
+                
+                # Remove mp3 file
+                if mp3_file.exists():
+                    mp3_file.unlink()
+                    
+                print(f"✓ Generated prompt audio: {prompt_file}")
+            except Exception as e:
+                print(f"Error generating prompt audio: {e}")
+                return
+            finally:
+                loop.close()
+        
+        # Load the generated prompt audio
+        if prompt_file.exists():
+            self.prompt_speech = load_wav(str(prompt_file), 16000)
+            print(f"✓ Loaded generated prompt audio from {prompt_file}")
     
     def _text_generator(self, text: str) -> Generator[str, None, None]:
         """Generator for streaming text input"""
@@ -115,9 +165,9 @@ class CosyVoiceTTS:
                 # Use instruct mode as fallback
                 # Detect language and use appropriate instruction
                 if any('\uac00' <= c <= '\ud7af' for c in text):  # Korean
-                    instruction = '용温柔的语气说韩语'
+                    instruction = 'Speak Korean in a gentle tone'
                 elif any('\u4e00' <= c <= '\u9fff' for c in text):  # Chinese
-                    instruction = '用温柔的语气说这句话'
+                    instruction = 'Speak Chinese in a gentle tone'
                 else:  # English or other
                     instruction = 'Speak in a gentle tone'
                 
@@ -144,7 +194,7 @@ class CosyVoiceTTS:
     def synthesize(self, text: str, output_path: str = "output.wav", speaker_wav: str = None) -> str:
         """Convert text to speech file"""
         if not text or not text.strip():
-            text = "텍스트가 제공되지 않았습니다"  # Default Korean text
+            text = "No text provided"  # Default English text
         
         # Override prompt if speaker_wav is provided
         old_prompt = None

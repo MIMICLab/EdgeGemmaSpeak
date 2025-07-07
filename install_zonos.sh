@@ -83,7 +83,7 @@ else
     git pull
 fi
 
-# Install Zonos
+# Install Zonos from local directory
 echo "Installing Zonos..."
 pip install -e .
 
@@ -93,9 +93,7 @@ pip install --no-build-isolation -e .[compile] || echo "Warning: Failed to insta
 
 cd ../..
 
-# Install additional dependencies for AgentVox
-echo "Installing additional dependencies for AgentVox..."
-pip install edge-tts  # For fallback TTS and speaker generation
+# Note: All Python dependencies should be installed via main requirements.txt
 
 # Test Zonos installation
 echo

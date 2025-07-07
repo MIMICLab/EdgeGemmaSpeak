@@ -7,9 +7,13 @@ import tempfile
 import subprocess
 import platform
 import pygame
+import pyaudio
+import threading
+import queue
 from pathlib import Path
 from typing import Optional
 import warnings
+import io
 
 # Add Zonos path
 ZONOS_PATH = Path(__file__).parent.parent / "third_party" / "Zonos"
@@ -227,34 +231,74 @@ class ZonosTTS:
                 self.speaker_embedding = old_embedding
     
     async def _stream_and_play_async(self, text: str) -> None:
-        """Asynchronous streaming playback"""
-        # Zonos doesn't support true streaming, so generate full audio first
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-            tmp_path = tmp_file.name
-        
+        """Asynchronous streaming playback with immediate audio output"""
         try:
-            await self._synthesize_async(text, tmp_path)
+            if self.speaker_embedding is None:
+                raise Exception("No speaker embedding available")
             
-            # Platform-specific playback
-            if platform.system() == "Darwin":
-                # macOS: use afplay
-                subprocess.call(["afplay", tmp_path])
-            else:
-                # Other OS: use pygame
-                pygame.mixer.music.load(tmp_path)
-                pygame.mixer.music.play()
-                
-                # Wait for playback to complete
-                while pygame.mixer.music.get_busy():
-                    await asyncio.sleep(0.1)
-                    
-        finally:
-            # Clean up temporary file
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            # Determine language
+            language = self._detect_language(text)
+            
+            # Ensure speaker embedding is on correct device
+            speaker_embedding = self.speaker_embedding
+            if hasattr(speaker_embedding, 'to'):
+                speaker_embedding = speaker_embedding.to(self.device)
+            
+            # Create conditioning
+            cond_dict = make_cond_dict(
+                text=text,
+                speaker=speaker_embedding,
+                language=language
+            )
+            conditioning = self.model.prepare_conditioning(cond_dict)
+            
+            # Generate audio codes
+            codes = self.model.generate(conditioning)
+            
+            # Decode to audio
+            wavs = self.model.autoencoder.decode(codes).cpu()
+            audio_data = wavs[0]
+            
+            # Convert to numpy array for playback
+            audio_np = audio_data.numpy()
+            if len(audio_np.shape) > 1:
+                audio_np = audio_np[0]  # Take first channel if stereo
+            
+            # Initialize PyAudio for streaming
+            p = pyaudio.PyAudio()
+            stream = p.open(
+                format=pyaudio.paFloat32,
+                channels=1,
+                rate=self.model.autoencoder.sampling_rate,
+                output=True,
+                frames_per_buffer=1024
+            )
+            
+            # Stream audio in chunks for immediate playback
+            chunk_size = 1024
+            for i in range(0, len(audio_np), chunk_size):
+                chunk = audio_np[i:i+chunk_size]
+                if len(chunk) < chunk_size:
+                    # Pad last chunk if needed
+                    chunk = torch.nn.functional.pad(
+                        torch.tensor(chunk), 
+                        (0, chunk_size - len(chunk))
+                    ).numpy()
+                stream.write(chunk.tobytes())
+                await asyncio.sleep(0)  # Allow other async operations
+            
+            # Clean up
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            
+        except Exception as e:
+            print(f"Zonos streaming error: {e}")
+            # Fallback to file-based playback
+            await self._fallback_playback(text)
     
     def speak_streaming(self, text: str):
-        """Stream text to speech with playback"""
+        """Stream text to speech with immediate playback"""
         if not text or not text.strip():
             print("Warning: Empty text - skipping TTS")
             return
@@ -271,33 +315,33 @@ class ZonosTTS:
         except Exception as e:
             print(f"Zonos streaming error: {e}")
     
+    async def _fallback_playback(self, text: str):
+        """Fallback to file-based playback if streaming fails"""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            tmp_path = tmp_file.name
+        
+        try:
+            await self._synthesize_async(text, tmp_path)
+            
+            if platform.system() == "Darwin":
+                subprocess.call(["afplay", tmp_path])
+            else:
+                pygame.mixer.music.load(tmp_path)
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    await asyncio.sleep(0.1)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    
     def speak(self, text: str):
-        """Convert text to speech and play"""
+        """Convert text to speech and play with streaming"""
         if not text or not text.strip():
             print("Warning: Empty text - skipping TTS")
             return
         
-        try:
-            output_path = "temp_speech.wav"
-            self.synthesize(text, output_path)
-            
-            # Platform-specific playback
-            if platform.system() == "Darwin":
-                subprocess.call(["afplay", output_path])
-            else:
-                pygame.mixer.music.load(output_path)
-                pygame.mixer.music.play()
-                
-                # Wait for playback
-                while pygame.mixer.music.get_busy():
-                    pygame.time.Clock().tick(10)
-            
-            # Clean up
-            if os.path.exists(output_path):
-                os.remove(output_path)
-                
-        except Exception as e:
-            print(f"Zonos playback error: {e}")
+        # Use streaming playback
+        self.speak_streaming(text)
     
     def set_voice(self, voice_type: str = "default"):
         """Set voice type by regenerating speaker embedding"""
