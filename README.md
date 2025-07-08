@@ -331,13 +331,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This project uses several third-party libraries:
 - **edge-tts**: LGPL-3.0 License (for TTS functionality)
+- **coqui-tts**: Mozilla Public License 2.0 (for advanced TTS with voice cloning)
 - **faster-whisper**: MIT License (for STT functionality)
 - **llama-cpp-python**: MIT License (for LLM inference)
 - **Gemma Model**: Check the model provider's license terms
 
 For complete third-party license information, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-**Note on edge-tts**: The edge-tts library is licensed under LGPL-3.0. This project uses it as a library dependency without modifications. Users are free to replace edge-tts with their own version if desired. The LGPL-3.0 license of edge-tts does not affect the MIT licensing of this project's source code.
+**Note on copyleft licenses**: 
+- The edge-tts library (LGPL-3.0) is used as a library dependency without modifications. Users are free to replace edge-tts with their own version if desired.
+- The coqui-tts library (MPL-2.0) is used as an optional dependency for advanced TTS features. The MPL-2.0 license only requires that modifications to coqui-tts itself be shared, not your application code.
+- Neither the LGPL-3.0 license of edge-tts nor the MPL-2.0 license of coqui-tts affects the MIT licensing of this project's source code.
 
 ## Contributing
 
