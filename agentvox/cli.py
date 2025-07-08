@@ -3,16 +3,16 @@ Command-line interface for agentvox
 """
 
 import argparse
+import subprocess
 import sys
+import os
 from pathlib import Path
-from .voice_assistant import main as voice_assistant_main, ModelConfig, AudioConfig
+from .voice_assistant import ModelConfig, AudioConfig
 
 
 def download_model():
     """Download the default Gemma model"""
-    import subprocess
-    import sys
-    import os
+
     
     model_dir = Path.home() / ".agentvox" / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -96,8 +96,6 @@ def main():
     parser.add_argument("--tts-engine", type=str, default="edge",
                        choices=["edge", "coqui"],
                        help="TTS engine to use (default: edge)")
-    parser.add_argument("--coqui-model", type=str, default="voice_conversion_models/multilingual/multi-dataset/openvoice_v2",
-                       help="Coqui TTS model to use")
     parser.add_argument("--speaker-wav", type=str, default=None,
                        help="Speaker voice sample file for voice cloning (Coqui only)")
     parser.add_argument("--download-model", action="store_true",
@@ -106,6 +104,8 @@ def main():
                        help="List all available Korean TTS voices")
     parser.add_argument("--list-tts-models", action="store_true",
                        help="List all available Coqui TTS models")
+    parser.add_argument("--record-speaker", action="store_true",
+                       help="Record speaker voice sample for TTS voice cloning")
     
     # STT 파라미터
     parser.add_argument("--stt-language", type=str, default="ko",
@@ -187,8 +187,8 @@ def main():
             
             print(f"\n\nTotal models available: {len(models)}")
             print("\nUsage examples:")
-            print("  agentvox --tts-engine coqui --coqui-model tts_models/multilingual/multi-dataset/xtts_v2")
-            print("  agentvox --tts-engine coqui --coqui-model tts_models/en/ljspeech/tacotron2-DDC")
+            print("  agentvox --tts-engine coqui")
+            print("  agentvox --tts-engine coqui --stt-language en")
             print("\nVoice cloning example:")
             print("  agentvox --tts-engine coqui --speaker-wav path/to/voice_sample.wav")
             
@@ -295,6 +295,24 @@ def main():
         print("=" * 70)
         sys.exit(0)
     
+    if args.record_speaker:
+        # Import the recording module
+        from .record_speaker_wav import main as record_main
+        
+        # Pass the stt_language to the recorder
+        original_argv = sys.argv
+        sys.argv = ["record_speaker_wav", "--language", args.stt_language]
+        
+        # Add output path if speaker_wav is specified
+        if args.speaker_wav:
+            sys.argv.extend(["--output", args.speaker_wav])
+        
+        try:
+            record_main()
+        finally:
+            sys.argv = original_argv
+        sys.exit(0)
+    
     # Create configurations
     
     # Map voice choice to actual voice name
@@ -348,7 +366,6 @@ def main():
         # TTS parameters
         tts_engine=args.tts_engine,
         tts_voice=tts_voice,
-        coqui_model=args.coqui_model,
         speaker_wav=args.speaker_wav,
         # LLM parameters
         llm_max_tokens=args.llm_max_tokens,

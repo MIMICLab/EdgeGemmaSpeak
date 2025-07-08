@@ -35,6 +35,7 @@ dependencies = [
     "gradio",
     "flask",
     "pyaudio",
+    "hangul-romanize"
 ]
 
 [project.urls]

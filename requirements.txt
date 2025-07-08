@@ -11,3 +11,4 @@ gradio
 flask
 pyaudio
 coqui-tts
+hangul-romanize

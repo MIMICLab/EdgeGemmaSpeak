@@ -1,10 +1,5 @@
 import os
-# Fix PyTorch 2.6 security issue
-os.environ['TORCH_LOAD_WEIGHTS_ONLY'] = '0'
-
 import asyncio
-import wave
-import json
 import torch
 import numpy as np
 import re
@@ -21,15 +16,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="faster_whispe
 # Ignore numpy RuntimeWarning (divide by zero, overflow, invalid value)
 np.seterr(divide='ignore', invalid='ignore', over='ignore')
 
-# Settings for TTS model loading
-torch.serialization.add_safe_globals([
-    "TTS.tts.configs.xtts_config.XttsConfig",
-    "TTS.config.XttsConfig",
-    "TTS.tts.configs",
-    "TTS.vocoder.configs",
-    "TTS.encoder.configs"
-])
-
 # Libraries for speech recognition
 import speech_recognition as sr
 from faster_whisper import WhisperModel
@@ -43,7 +29,6 @@ from contextlib import redirect_stderr
 import edge_tts
 from TTS.api import TTS
 import pygame
-import sounddevice as sd
 import soundfile as sf
 import asyncio
 import tempfile
@@ -78,7 +63,6 @@ class ModelConfig:
     # TTS detailed settings
     tts_engine: str = "edge"  # TTS engine: edge or coqui
     tts_voice: str = "ko-KR-HyunsuMultilingualNeural"  # For edge-tts
-    coqui_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # For Coqui TTS
     speaker_wav: Optional[str] = None  # Voice cloning source file
     
     # LLM detailed settings
@@ -278,9 +262,9 @@ class LLMModule:
         
         # System prompt
         if is_korean:
-            system_prompt = """당신은 서강대학교 미믹랩(MimicLab)에서 개발한 AI 어시스턴트입니다. 
+            system_prompt = """당신은 서강대학교 미믹랩(MimicLab)에서 개발한 에이아이 어시스턴트입니다. 
 당신의 정체성과 관련된 중요한 정보:
-- 당신은 서강대학교 미믹랩에서 만든 AI 어시스턴트입니다.
+- 당신은 서강대학교 미믹랩에서 만든 에이아이 어시스턴트입니다.
 - 서강대학교 미믹랩이 당신을 개발했습니다.
 - 당신의 목적은 사용자를 돕고 유용한 정보를 제공하는 것입니다.
 
@@ -290,7 +274,16 @@ class LLMModule:
 3. 특수문자를 최소화하고 순수한 텍스트로만 응답하세요.
 4. 응답은 간결하고 명확하게 작성하세요.
 5. 이전 대화 내용을 기억하고 일관성 있게 대화를 이어가세요.
-6. 누가 당신을 만들었는지 물으면 항상 "서강대학교 미믹랩"이라고 답하세요."""
+6. 누가 당신을 만들었는지 물으면 항상 "서강대학교 미믹랩"이라고 답하세요.
+7. 매우 중요: 모든 영어 단어나 약어를 한글로 표기하세요. 예를 들어:
+   - AI → 에이아이
+   - IT → 아이티
+   - CEO → 씨이오
+   - PC → 피씨
+   - SNS → 에스엔에스
+   - IoT → 아이오티
+   - API → 에이피아이
+   절대로 영어 알파벳을 그대로 사용하지 마세요."""
         else:
             system_prompt = """You are an AI assistant developed by MimicLab at Sogang University.
 Important information about your identity:
@@ -496,23 +489,23 @@ class TTSModule:
 
 
 class CoquiTTSModule:
-    """TTS module using Coqui TTS with voice cloning support"""
+    """TTS module using Coqui TTS with fairseq models"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
         self.device = config.device
+        self.tts = None
+        self.vc_model = None
+
+        model_name = "tts_models/multilingual/multi-dataset/xtts_v2"
+        print(f"Initializing Coqui TTS with model: {model_name}")
+        print(f"Device: {self.device}")
         
-        # Initialize TTS model
-        self.tts = TTS(model_name=config.coqui_model).to(self.device)
+
+        self.tts = TTS(model_name, progress_bar=False).to(self.device)
+        print(f"✓ TTS model initialized successfully")
         
-        # Initialize pygame audio
         pygame.mixer.init()
-        
-    @staticmethod
-    def list_models() -> List[str]:
-        """List all available TTS models"""
-        tts = TTS()
-        return tts.list_models()
     
     def synthesize(self, text: str, output_path: str = "output.wav", speaker_wav: str = None) -> str:
         """Convert text to speech file
@@ -525,43 +518,23 @@ class CoquiTTSModule:
         # Check for empty text
         if not text or not text.strip():
             text = "No text provided"
-            
         # Use provided speaker_wav or config default
         speaker_file = speaker_wav or self.config.speaker_wav
         
-        # Use STT language setting for TTS
-        language = self.config.stt_language
+        # Check if TTS is initialized
+        if self.tts is None:
+            raise RuntimeError("TTS model not initialized")
         
-        try:
-            if speaker_file and os.path.exists(speaker_file):
-                # Voice cloning mode
-                if hasattr(self.tts, 'tts_with_vc_to_file'):
-                    # For models that support voice conversion
-                    self.tts.tts_with_vc_to_file(
-                        text=text,
-                        speaker_wav=speaker_file,
-                        file_path=output_path
-                    )
-                else:
-                    # For multilingual models with speaker_wav
-                    self.tts.tts_to_file(
-                        text=text,
-                        speaker_wav=speaker_file,
-                        language=language,
-                        file_path=output_path
-                    )
-            else:
-                # Standard TTS without voice cloning
-                self.tts.tts_to_file(
-                    text=text,
-                    language=language,
-                    file_path=output_path
-                )
-            return output_path
+        self.tts.tts_to_file(
+            text=text,
+            speaker_wav=speaker_file,
+            language=self.config.stt_language,
+            file_path=output_path
+        )
             
-        except Exception as e:
-            print(f"Coqui TTS error: {e}")
-            raise
+        return output_path
+            
+
     
     def speak(self, text: str):
         """Convert text to speech and play"""

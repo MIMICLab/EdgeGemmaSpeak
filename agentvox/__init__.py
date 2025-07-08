@@ -11,6 +11,7 @@ from .voice_assistant import (
     ModelConfig,
     main
 )
+from .record_speaker_wav import SpeakerRecorder
 
 __version__ = "0.1.0"
 __author__ = "MIMIC Lab"
@@ -22,5 +23,6 @@ __all__ = [
     "TTSModule",
     "AudioConfig",
     "ModelConfig",
-    "main"
+    "main",
+    "SpeakerRecorder"
 ]
