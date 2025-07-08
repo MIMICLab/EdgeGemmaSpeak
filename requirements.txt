@@ -1,4 +1,6 @@
-torch
+torch>=2.6.0
+torchvision
+torchaudio
 numpy
 SpeechRecognition
 faster-whisper
@@ -12,3 +14,5 @@ flask
 pyaudio
 coqui-tts
 hangul-romanize
+mecab-python3
+unidic-lite

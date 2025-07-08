@@ -22,7 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
-    "torch",
+    "torch>=2.6.0",
     "numpy",
     "SpeechRecognition",
     "faster-whisper",
@@ -35,7 +35,9 @@ dependencies = [
     "gradio",
     "flask",
     "pyaudio",
-    "hangul-romanize"
+    "hangul-romanize",
+    "mecab-python3",
+    "unidic-lite"
 ]
 
 [project.urls]
