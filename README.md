@@ -9,7 +9,7 @@ Edge-based voice assistant using Gemma LLM with Speech-to-Text and Text-to-Speec
 
 - **Speech Recognition (STT)**: High-speed speech recognition using Faster Whisper
 - **Conversational AI (LLM)**: Local LLM based on Llama.cpp (Gemma 3 12B)
-- **Speech Synthesis (TTS)**: Fast response with Edge-TTS streaming
+- **Speech Synthesis (TTS)**: Fast response with Edge-TTS or Coqui-TTS (with voice cloning support)
 - **Complete Offline Operation**: All processing is done locally, ensuring privacy
 
 ## Installation
@@ -74,6 +74,27 @@ agentvox --voice multilingual  # Korean multilingual male (default)
 agentvox --voice en-US-JennyNeural
 agentvox --voice ja-JP-NanamiNeural
 agentvox --voice zh-CN-XiaoxiaoNeural
+```
+
+### TTS Engine Selection
+
+```bash
+# Use Edge-TTS (default)
+agentvox --tts-engine edge
+
+# Use Coqui-TTS
+agentvox --tts-engine coqui
+
+# List available Coqui-TTS models
+agentvox --list-tts-models
+
+# Voice cloning with Coqui-TTS
+agentvox --tts-engine coqui --speaker-wav speaker_sample.wav
+
+# Record your own voice sample for cloning
+agentvox --record-speaker
+# Then use the recorded sample
+agentvox --tts-engine coqui --speaker-wav speaker_ko.wav
 ```
 
 ### Advanced Configuration
@@ -227,7 +248,8 @@ agentvox/
 ├── agentvox/              # Package directory
 │   ├── __init__.py               # Package initialization
 │   ├── voice_assistant.py        # Main module
-│   └── cli.py                    # CLI interface
+│   ├── cli.py                    # CLI interface
+│   └── record_speaker_wav.py     # Voice recording module
 ├── setup.py                      # Package setup
 ├── pyproject.toml               # Build configuration
 ├── requirements.txt             # Dependencies
