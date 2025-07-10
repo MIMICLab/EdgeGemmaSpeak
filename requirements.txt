@@ -1,6 +1,5 @@
-torch>=2.6.0
-torchvision
-torchaudio
+realtimestt
+realtimetts[coqui]
 numpy
 llama-cpp-python
 pygame
@@ -12,5 +11,4 @@ pyaudio
 hangul-romanize
 mecab-python3
 unidic-lite
-realtimestt
-realtimetts[coqui]
+torch>=2.6.0

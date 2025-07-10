@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentvox"
-version = "0.1.1"
+version = "0.2.0"
 description = "Edge-based voice assistant using Gemma LLM with STT and TTS capabilities"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -24,11 +24,9 @@ classifiers = [
 dependencies = [
     "torch>=2.6.0",
     "numpy",
-    "SpeechRecognition",
-    "faster-whisper",
+    "realtimestt",
+    "realtimetts[coqui]",
     "llama-cpp-python",
-    "edge-tts",
-    "coqui-tts",
     "pygame",
     "sounddevice",
     "soundfile",

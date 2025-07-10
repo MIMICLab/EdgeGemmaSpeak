@@ -58,9 +58,8 @@ class ModelConfig:
     
     # TTS detailed settings
     tts_engine: str = "coqui"  # Using Coqui engine
-    tts_voice: str = "ko-KR-HyunsuMultilingualNeural"  # For edge-tts compatibility
     speaker_wav: Optional[str] = None  # Voice cloning source file
-    tts_speed: float = 1.3  # TTS speed (1.0 is normal, higher is faster)
+    tts_speed: float = 1.0  # TTS speed (1.0 is normal, higher is faster)
     
     # LLM detailed settings
     llm_max_tokens: int = 512
@@ -124,7 +123,7 @@ class STTModule:
     def on_recording_start(self):
         """Callback when recording starts"""
         self.is_recording = True
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         if is_korean:
             print("녹음 시작...")
         else:
@@ -133,7 +132,7 @@ class STTModule:
     def on_recording_stop(self):
         """Callback when recording stops"""
         self.is_recording = False
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         if is_korean:
             print("녹음 종료.")
         else:
@@ -141,7 +140,7 @@ class STTModule:
             
     def on_transcription_start(self, audio_data=None):
         """Callback when transcription starts"""
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         if is_korean:
             print("텍스트 변환 중...")
         else:
@@ -159,7 +158,7 @@ class STTModule:
         
     def transcribe_once(self) -> Optional[str]:
         """Listen and transcribe once"""
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         
         if is_korean:
             print("\n말씀해주세요...")
@@ -251,7 +250,7 @@ class LLMModule:
     def generate_response(self, text: str, max_length: int = 512) -> str:
         """Generate response for input text"""
         # Check if using Korean voice
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         
         # Build conversation context
         if is_korean:
@@ -276,7 +275,7 @@ class LLMModule:
         response = answer['choices'][0]['text'].strip()
         
         # Check if using Korean voice
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         
         # Remove "Assistant:" or "어시스턴트:" prefix
         if response.startswith("Assistant:"):
@@ -306,7 +305,7 @@ class LLMModule:
     def _build_prompt(self) -> str:
         """Build prompt with conversation context"""
         # Check if using Korean voice
-        is_korean = self.config.tts_voice.startswith('ko-')
+        is_korean = self.config.stt_language.startswith('ko')
         
         # System prompt
         if is_korean:
@@ -382,7 +381,7 @@ class TTSModule:
         # Initialize Coqui engine
         self.engine = CoquiEngine(
             model_name=config.tts_model,
-            device=config.device if config.device != "mps" else "cpu",  # Coqui doesn't support MPS
+            device=config.device,
             voice=config.speaker_wav,  # Use voice parameter for cloning reference
             language=config.stt_language,
             speed=config.tts_speed  # Use configurable speed
@@ -426,7 +425,7 @@ class TTSModule:
             )
             
             # Wait for playback to complete
-            while self.is_speaking:
+            while self.stream.is_playing() or self.is_speaking:
                 time.sleep(0.1)
                 
         except Exception as e:
@@ -444,7 +443,7 @@ class VoiceAssistant:
         self.audio_config = audio_config
         
         # Check if using Korean voice
-        is_korean = model_config.tts_voice.startswith('ko-')
+        is_korean = model_config.stt_language.startswith('ko')
         
         if is_korean:
             print("모델을 초기화하는 중입니다...")
@@ -467,7 +466,7 @@ class VoiceAssistant:
     def run_conversation_loop(self):
         """Run conversation loop"""
         # Check if using Korean voice
-        is_korean = self.model_config.tts_voice.startswith('ko-')
+        is_korean = self.model_config.stt_language.startswith('ko')
         
         if is_korean:
             print("음성 대화 시스템이 시작되었습니다.")
@@ -542,6 +541,7 @@ class VoiceAssistant:
                 # Small delay before speaking to ensure STT is paused
                 time.sleep(0.2)
                 
+                # Speak and wait for completion
                 self.tts.speak_streaming(response)
                 
                 # Small delay after speaking to let audio fade out

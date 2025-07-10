@@ -172,7 +172,7 @@ from agentvox import VoiceAssistant, ModelConfig, AudioConfig
 model_config = ModelConfig(
     stt_model="base",
     llm_temperature=0.7,
-    tts_speed=1.3,  # Adjust TTS speed
+    tts_speed=1.0,  # Adjust TTS speed
     speaker_wav="voice_sample.wav"  # Optional: voice cloning
 )
 

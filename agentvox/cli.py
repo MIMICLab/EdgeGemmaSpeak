@@ -189,7 +189,6 @@ def main():
     # Create configurations
     
     # Voice presets are for compatibility only - Coqui uses voice cloning
-    tts_voice = args.voice  # Keep for compatibility
     stt_language = args.stt_language
     
     # Set device (auto-detection will happen in ModelConfig.__post_init__)
@@ -208,7 +207,6 @@ def main():
         stt_vad_min_silence_duration_ms=args.stt_vad_min_silence_duration,
         # TTS parameters
         tts_engine=args.tts_engine,
-        tts_voice=tts_voice,
         speaker_wav=args.speaker_wav,
         tts_speed=args.tts_speed,
         # LLM parameters
