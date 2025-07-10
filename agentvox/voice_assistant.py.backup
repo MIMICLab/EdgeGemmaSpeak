@@ -1,33 +1,36 @@
 import os
+import asyncio
 import torch
 import numpy as np
 import re
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from pathlib import Path
-import time
-import threading
-import logging
 
 # PyTorch 2.6 security settings
 import warnings
 warnings.filterwarnings("ignore", message="torch.load warnings")
 
+# Ignore Faster Whisper related warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="faster_whisper.feature_extractor")
 # Ignore numpy RuntimeWarning (divide by zero, overflow, invalid value)
 np.seterr(divide='ignore', invalid='ignore', over='ignore')
 
-# Libraries for speech recognition and synthesis
-from RealtimeSTT import AudioToTextRecorder
-from RealtimeTTS import TextToAudioStream, CoquiEngine
+# Libraries for speech recognition
+import speech_recognition as sr
+from faster_whisper import WhisperModel
 
 # Libraries for LLM
 from llama_cpp import Llama
 from pathlib import Path
 from contextlib import redirect_stderr
 
-# Libraries for audio
+# Libraries for TTS
+import edge_tts
+from TTS.api import TTS
 import pygame
 import soundfile as sf
+import asyncio
 import tempfile
 import subprocess
 import platform
@@ -51,16 +54,16 @@ class ModelConfig:
     # STT detailed settings
     stt_language: str = "ko"
     stt_beam_size: int = 5
+    stt_best_of: int = 5
     stt_temperature: float = 0.0
     stt_vad_threshold: float = 0.5
     stt_vad_min_speech_duration_ms: int = 250
     stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
     # TTS detailed settings
-    tts_engine: str = "coqui"  # Using Coqui engine
-    tts_voice: str = "ko-KR-HyunsuMultilingualNeural"  # For edge-tts compatibility
+    tts_engine: str = "edge"  # TTS engine: edge or coqui
+    tts_voice: str = "ko-KR-HyunsuMultilingualNeural"  # For edge-tts
     speaker_wav: Optional[str] = None  # Voice cloning source file
-    tts_speed: float = 1.3  # TTS speed (1.0 is normal, higher is faster)
     
     # LLM detailed settings
     llm_max_tokens: int = 512
@@ -84,104 +87,53 @@ class ModelConfig:
                 print("Auto-detected device: CPU")
 
 class STTModule:
-    """Module for converting speech to text using RealtimeSTT"""
+    """Module for converting speech to text"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
-        
-        # Initialize RealtimeSTT recorder
-        self.recorder = AudioToTextRecorder(
-            model=config.stt_model,
-            language=config.stt_language,
-            compute_type="float16" if config.device == "cuda" else "default",
-            gpu_device_index=0 if config.device == "cuda" else 0,  # Use 0 instead of None
-            device="cuda" if config.device == "cuda" else "cpu",
-            on_recording_start=self.on_recording_start,
-            on_recording_stop=self.on_recording_stop,
-            on_transcription_start=self.on_transcription_start,
-            beam_size=config.stt_beam_size,
-            initial_prompt=None,
-            suppress_tokens=[-1],
-            silero_sensitivity=config.stt_vad_threshold,
-            silero_use_onnx=True,  # Use ONNX for better performance
-            webrtc_sensitivity=3,
-            post_speech_silence_duration=config.stt_vad_min_silence_duration_ms / 1000.0,
-            min_length_of_recording=1.0,
-            enable_realtime_transcription=True,
-            realtime_model_type="tiny",
-            on_realtime_transcription_update=self.on_realtime_update,
-            on_realtime_transcription_stabilized=self.on_realtime_stabilized,
-            # Add echo suppression
-            use_microphone=True,
-            spinner=False,  # Disable spinner to reduce console noise
-            level=logging.WARNING
+        # Initialize Faster Whisper model (MPS not supported, using CPU)
+        # Use larger model for better accuracy
+        model_size = "small" if config.stt_model == "base" else config.stt_model
+        self.model = WhisperModel(
+            model_size, 
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            compute_type="float16" if torch.cuda.is_available() else "int8",
         )
         
-        self.is_recording = False
-        self.current_text = ""
-        self.realtime_text = ""
-        
-    def on_recording_start(self):
-        """Callback when recording starts"""
-        self.is_recording = True
-        is_korean = self.config.tts_voice.startswith('ko-')
-        if is_korean:
-            print("녹음 시작...")
-        else:
-            print("Recording started...")
+    def transcribe(self, audio_path: str, language: str = None) -> str:
+        """Convert audio file to text"""
+        if language is None:
+            language = self.config.stt_language
             
-    def on_recording_stop(self):
-        """Callback when recording stops"""
-        self.is_recording = False
-        is_korean = self.config.tts_voice.startswith('ko-')
-        if is_korean:
-            print("녹음 종료.")
-        else:
-            print("Recording stopped.")
-            
-    def on_transcription_start(self, audio_data=None):
-        """Callback when transcription starts"""
-        is_korean = self.config.tts_voice.startswith('ko-')
-        if is_korean:
-            print("텍스트 변환 중...")
-        else:
-            print("Transcribing...")
-            
-    def on_realtime_update(self, text):
-        """Callback for real-time transcription updates"""
-        self.realtime_text = text
-        # Print real-time updates
-        print(f"\r{text}", end='', flush=True)
+        segments, info = self.model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=self.config.stt_beam_size,
+            best_of=self.config.stt_best_of,
+            temperature=self.config.stt_temperature,
+            vad_filter=True,  # Enable Voice Activity Detection
+            vad_parameters=dict(
+                threshold=self.config.stt_vad_threshold,
+                min_speech_duration_ms=self.config.stt_vad_min_speech_duration_ms,
+                max_speech_duration_s=float('inf'),
+                min_silence_duration_ms=self.config.stt_vad_min_silence_duration_ms,
+                speech_pad_ms=400
+            ),
+            word_timestamps=True  # Enable word-level timestamps
+        )
         
-    def on_realtime_stabilized(self, text):
-        """Callback for stabilized real-time transcription"""
-        self.current_text = text
-        
-    def transcribe_once(self) -> Optional[str]:
-        """Listen and transcribe once"""
-        is_korean = self.config.tts_voice.startswith('ko-')
-        
-        if is_korean:
-            print("\n말씀해주세요...")
-        else:
-            print("\nPlease speak...")
-            
-        # Clear previous text
-        self.current_text = ""
-        self.realtime_text = ""
-        
-        # Get transcription using callback
-        result = []
-        
-        def process_text(text):
-            result.append(text)
-            print(f"\n최종 텍스트: {text}" if is_korean else f"\nFinal text: {text}")
-            
-        self.recorder.text(process_text)
-        
-        if result:
-            return result[0]
-        return None
+        # Combine all text segments
+        full_text = " ".join([segment.text for segment in segments])
+        return full_text.strip()
+    
+    def transcribe_stream(self, audio_data: np.ndarray) -> str:
+        """Convert real-time audio stream to text"""
+        # Save to temporary file and process
+        temp_path = "temp_audio.wav"
+        sf.write(temp_path, audio_data, 16000)
+        text = self.transcribe(temp_path)
+        os.remove(temp_path)
+        return text
 
 class LlamaTokenizer:
     def __init__(self, llama_model):
@@ -374,67 +326,250 @@ Please follow these rules:
         self.conversation_history = []
 
 class TTSModule:
-    """TTS module using RealtimeTTS with CoquiEngine"""
+    """Fast Korean speech synthesis module using Edge-TTS"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
+        # Edge-TTS doesn't require separate initialization
+        # Korean voice options: 
+        # - ko-KR-HyunsuMultilingualNeural (male, multilingual)
+        # - ko-KR-InJoonNeural (male)
+        # - ko-KR-SunHiNeural (female)
+        self.voice = config.tts_voice  # Get voice from config
         
-        # Initialize Coqui engine
-        self.engine = CoquiEngine(
-            model_name=config.tts_model,
-            device=config.device if config.device != "mps" else "cpu",  # Coqui doesn't support MPS
-            voice=config.speaker_wav,  # Use voice parameter for cloning reference
-            language=config.stt_language,
-            speed=config.tts_speed  # Use configurable speed
-        )
+        # Initialize pygame audio
+        pygame.mixer.init()
         
-        # Initialize text-to-audio stream
-        self.stream = TextToAudioStream(
-            self.engine,
-            on_audio_stream_start=self.on_stream_start,
-            on_audio_stream_stop=self.on_stream_stop
-        )
+    async def _synthesize_async(self, text: str, output_path: str) -> str:
+        """Asynchronously convert text to speech file"""
+        try:
+            communicate = edge_tts.Communicate(text, self.voice)
+            await communicate.save(output_path)
+            return output_path
+        except Exception as e:
+            print(f"Edge-TTS error: {e}")
+            raise
         
-        self.is_speaking = False
+    def synthesize(self, text: str, output_path: str = "output.mp3", speaker_wav: str = None) -> str:
+        """Convert text to speech file
         
-    def on_stream_start(self):
-        """Callback when audio stream starts"""
-        self.is_speaking = True
-        
-    def on_stream_stop(self):
-        """Callback when audio stream stops"""
-        self.is_speaking = False
-        
+        Args:
+            text: Text to convert
+            output_path: Output audio file path
+            speaker_wav: Speaker voice sample file path (unused in Edge-TTS)
+        """
+        # Check for empty text
+        if not text or not text.strip():
+            text = "No text provided"
+            
+        # 동기 함수에서 비동기 함수 실행
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(self._synthesize_async(text, output_path))
+            return result
+        finally:
+            loop.close()
+    
+    async def _stream_and_play_async(self, text: str) -> None:
+        """비동기 스트리밍 재생"""
+        # macOS에서는 afplay 사용, 다른 OS에서는 pygame 사용
+        if platform.system() == "Darwin":
+            # macOS: 전체 파일 생성 후 afplay로 재생
+            output_path = "temp_speech.mp3"
+            communicate = edge_tts.Communicate(text, self.voice)
+            await communicate.save(output_path)
+            
+            # afplay로 재생 (블로킹)
+            subprocess.call(["afplay", output_path])
+            
+            # 파일 삭제
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        else:
+            # 다른 OS: pygame 스트리밍 재생
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+                tmp_path = tmp_file.name
+            
+            try:
+                # Edge-TTS 통신 객체 생성
+                communicate = edge_tts.Communicate(text, self.voice)
+                
+                # 첫 번째 청크를 받을 때까지 대기
+                first_chunk = True
+                file_handle = open(tmp_path, 'wb')
+                
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        file_handle.write(chunk["data"])
+                        file_handle.flush()
+                        
+                        # 첫 번째 청크를 받으면 재생 시작
+                        if first_chunk:
+                            first_chunk = False
+                            # 약간의 버퍼링을 위해 잠시 대기
+                            await asyncio.sleep(0.1)
+                            pygame.mixer.music.load(tmp_path)
+                            pygame.mixer.music.play()
+                
+                file_handle.close()
+                
+                # 재생 완료 대기
+                while pygame.mixer.music.get_busy():
+                    await asyncio.sleep(0.1)
+                    
+            finally:
+                # Delete temporary file
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+    
     def speak_streaming(self, text: str):
-        """Stream text to speech with real-time synthesis"""
+        """스트리밍 방식으로 텍스트를 음성으로 변환하여 재생"""
+        # 빈 텍스트 체크
+        if not text or not text.strip():
+            print("경고: 빈 텍스트 - TTS 건너뜀")
+            return
+            
+        try:
+            # 동기 함수에서 비동기 함수 실행
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._stream_and_play_async(text))
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            print(f"TTS streaming playback error: {e}")
+            # Continue program execution even if error occurs
+    
+    def speak(self, text: str):
+        """Convert text to speech and play (maintain existing method)"""
+        # 빈 텍스트 체크
+        if not text or not text.strip():
+            print("경고: 빈 텍스트 - TTS 건너뜀")
+            return
+            
+        try:
+            output_path = "temp_speech.mp3"
+            self.synthesize(text, output_path)
+            
+            # Use afplay on macOS
+            if platform.system() == "Darwin":
+                subprocess.call(["afplay", output_path])
+            else:
+                # Use pygame on other OS
+                pygame.mixer.music.load(output_path)
+                pygame.mixer.music.play()
+                
+                # Wait until playback finishes
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
+                
+            # Delete temporary file
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                
+        except Exception as e:
+            print(f"TTS playback error: {e}")
+            # Continue program execution even if error occurs
+        
+    def set_voice(self, voice_type: str = "female"):
+        """Set voice type
+        
+        Args:
+            voice_type: "male" or "female"
+        """
+        if voice_type == "male":
+            self.voice = "ko-KR-InJoonNeural"
+        elif voice_type == "female":
+            self.voice = "ko-KR-SunHiNeural"
+        else:
+            self.voice = "ko-KR-HyunsuMultilingualNeural"  # default
+
+
+class CoquiTTSModule:
+    """TTS module using Coqui TTS with fairseq models"""
+    
+    def __init__(self, config: ModelConfig):
+        self.config = config
+        self.device = config.device
+        self.tts = None
+        self.vc_model = None
+
+        model_name = "tts_models/multilingual/multi-dataset/xtts_v2"
+        print(f"Initializing Coqui TTS with model: {model_name}")
+        print(f"Device: {self.device}")
+        
+
+        self.tts = TTS(model_name, progress_bar=False).to(self.device)
+        print(f"✓ TTS model initialized successfully")
+        
+        pygame.mixer.init()
+    
+    def synthesize(self, text: str, output_path: str = "output.wav", speaker_wav: str = None) -> str:
+        """Convert text to speech file
+        
+        Args:
+            text: Text to convert
+            output_path: Output audio file path
+            speaker_wav: Speaker voice sample file path for voice cloning
+        """
+        # Check for empty text
+        if not text or not text.strip():
+            text = "No text provided"
+        # Use provided speaker_wav or config default
+        speaker_file = speaker_wav or self.config.speaker_wav
+        
+        # Check if TTS is initialized
+        if self.tts is None:
+            raise RuntimeError("TTS model not initialized")
+        
+        self.tts.tts_to_file(
+            text=text,
+            speaker_wav=speaker_file,
+            language=self.config.stt_language,
+            file_path=output_path
+        )
+            
+        return output_path
+            
+
+    
+    def speak(self, text: str):
+        """Convert text to speech and play"""
         # Check for empty text
         if not text or not text.strip():
             print("Warning: Empty text - TTS skipped")
             return
             
         try:
-            # Feed text to stream
-            self.stream.feed(text)
+            output_path = "temp_speech.wav"
+            self.synthesize(text, output_path)
             
-            # Play the stream
-            self.stream.play_async(
-                fast_sentence_fragment=True,
-                fast_sentence_fragment_allsentences=True,
-                minimum_sentence_length=10,
-                minimum_first_fragment_length=5,
-                log_synthesized_text=False
-            )
-            
-            # Wait for playback to complete
-            while self.is_speaking:
-                time.sleep(0.1)
+            # Use afplay on macOS
+            if platform.system() == "Darwin":
+                subprocess.call(["afplay", output_path])
+            else:
+                # Use pygame on other OS
+                pygame.mixer.music.load(output_path)
+                pygame.mixer.music.play()
+                
+                # Wait until playback finishes
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
+                    
+            # Delete temporary file
+            if os.path.exists(output_path):
+                os.remove(output_path)
                 
         except Exception as e:
-            print(f"TTS streaming error: {e}")
-            
-    def speak(self, text: str):
-        """Legacy method for compatibility"""
-        self.speak_streaming(text)
+            print(f"TTS playback error: {e}")
+            # Continue program execution even if error occurs
+    
+    def speak_streaming(self, text: str):
+        """For compatibility with EdgeTTS interface - uses non-streaming speak"""
+        self.speak(text)
 
 class VoiceAssistant:
     """Main class for managing the entire voice conversation system"""
@@ -453,11 +588,69 @@ class VoiceAssistant:
             
         self.stt = STTModule(model_config)
         self.llm = LLMModule(model_config)
-        self.tts = TTSModule(model_config)
         
-        # Flag to prevent STT during TTS playback
-        self.is_speaking = False
+        # Initialize TTS based on selected engine
+        if model_config.tts_engine == "coqui":
+            self.tts = CoquiTTSModule(model_config)
+        else:
+            self.tts = TTSModule(model_config)
         
+        # Initialize audio recorder
+        self.recognizer = sr.Recognizer()
+        # Adjust speech recognition sensitivity
+        self.recognizer.energy_threshold = 1500  # Lower sensitivity
+        self.recognizer.dynamic_energy_threshold = False  # Disable auto adjustment for consistency
+        self.recognizer.pause_threshold = 1.5  # Increase silence time to determine end of speech
+        self.recognizer.non_speaking_duration = 1.5  # Time to consider as non-speaking
+        
+        self.microphone = sr.Microphone(sample_rate=audio_config.sample_rate)
+        
+    def listen_once(self) -> Optional[str]:
+        """Listen to voice from microphone once and convert to text"""
+        # Check if using Korean voice
+        is_korean = self.model_config.tts_voice.startswith('ko-')
+        
+        with self.microphone as source:
+            # Adjust for ambient noise - longer duration for better calibration
+            self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
+            if is_korean:
+                print("말씀해주세요...")
+            else:
+                print("Please speak...")
+            
+            try:
+                # Record voice - remove phrase_time_limit for natural recording
+                audio = self.recognizer.listen(
+                    source, 
+                    timeout=30  # 30 second timeout
+                )
+                
+                # Save to temporary file
+                wav_data = audio.get_wav_data()
+                temp_path = "temp_recording.wav"
+                with open(temp_path, "wb") as f:
+                    f.write(wav_data)
+                
+                # STT processing
+                text = self.stt.transcribe(temp_path)
+                
+                os.remove(temp_path)
+                
+                return text
+                
+            except sr.WaitTimeoutError:
+                if is_korean:
+                    print("음성이 감지되지 않았습니다.")
+                else:
+                    print("No voice detected.")
+                return None
+            except Exception as e:
+                if is_korean:
+                    print(f"오류 발생: {e}")
+                else:
+                    print(f"Error occurred: {e}")
+                return None
+    
     def process_conversation(self, input_text: str) -> str:
         """Process text input and generate response"""
         # Generate response with LLM
@@ -472,14 +665,18 @@ class VoiceAssistant:
         if is_korean:
             print("음성 대화 시스템이 시작되었습니다.")
             print("명령어: '종료' - 프로그램 종료, '초기화' - 대화 내용 초기화, '대화 내역' - 대화 히스토리 확인")
+            if self.model_config.tts_engine == "coqui":
+                print("        'TTS 모델' - 사용 가능한 TTS 모델 목록 보기")
         else:
             print("Voice conversation system started.")
             print("Commands: 'exit' - Exit program, 'reset' - Reset conversation, 'history' - View conversation history")
+            if self.model_config.tts_engine == "coqui":
+                print("         'tts models' - List available TTS models")
         print("-" * 50)
         
         while True:
-            # Get voice input using RealtimeSTT
-            user_input = self.stt.transcribe_once()
+            # Get voice input
+            user_input = self.listen_once()
             
             if user_input:
                 if is_korean:
@@ -526,6 +723,30 @@ class VoiceAssistant:
                     else:
                         self.tts.speak_streaming(f"Currently {len(self.llm.conversation_history)} conversations are recorded.")
                     continue
+                elif ("tts model" in user_input.lower() or "TTS 모델" in user_input) and self.model_config.tts_engine == "coqui":
+                    # List available TTS models
+                    try:
+                        models = CoquiTTSModule.list_models()
+                        if is_korean:
+                            print("\n=== 사용 가능한 TTS 모델 ===")
+                            for i, model in enumerate(models):
+                                print(f"{i+1}. {model}")
+                            print("==========================")
+                            self.tts.speak_streaming(f"{len(models)}개의 TTS 모델을 사용할 수 있습니다.")
+                        else:
+                            print("\n=== Available TTS Models ===")
+                            for i, model in enumerate(models):
+                                print(f"{i+1}. {model}")
+                            print("==========================")
+                            self.tts.speak_streaming(f"{len(models)} TTS models are available.")
+                    except Exception as e:
+                        if is_korean:
+                            print(f"모델 목록을 가져오는 중 오류 발생: {e}")
+                            self.tts.speak_streaming("모델 목록을 가져올 수 없습니다.")
+                        else:
+                            print(f"Error fetching model list: {e}")
+                            self.tts.speak_streaming("Unable to fetch model list.")
+                    continue
                 
                 # Process normal conversation
                 response = self.process_conversation(user_input)
@@ -534,25 +755,8 @@ class VoiceAssistant:
                 else:
                     print(f"Assistant: {response}")
                 
-                # Respond with voice using streaming TTS
-                self.is_speaking = True
-                # Pause STT during TTS playback
-                self.stt.recorder.set_microphone(False)
-                
-                # Small delay before speaking to ensure STT is paused
-                time.sleep(0.2)
-                
+                # Respond with voice (streaming mode)
                 self.tts.speak_streaming(response)
-                
-                # Small delay after speaking to let audio fade out
-                time.sleep(0.3)
-                
-                # Resume STT after TTS
-                self.is_speaking = False
-                self.stt.recorder.set_microphone(True)
-        
-        # Cleanup
-        self.stt.recorder.shutdown()
 
 # Main execution function
 def main():
@@ -568,7 +772,4 @@ def main():
     assistant.run_conversation_loop()
 
 if __name__ == "__main__":
-    # Required for multiprocessing on macOS/Windows
-    import multiprocessing
-    multiprocessing.set_start_method('spawn', force=True)
     main()

@@ -3,14 +3,23 @@
 [![license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/MIMICLab/AgentVox/blob/main/LICENSE)
 [![Downloads](https://pepy.tech/badge/agentvox)](https://pepy.tech/project/agentvox)
 
-Edge-based voice assistant using Gemma LLM with Speech-to-Text and Text-to-Speech capabilities
+Edge-based voice assistant using Gemma LLM with real-time Speech-to-Text and Text-to-Speech capabilities
+
+## 🆕 What's New (v0.2.0)
+
+- **Real-time Streaming STT/TTS**: Replaced traditional STT/TTS with RealtimeSTT and RealtimeTTS for lower latency
+- **Live Transcription**: See what you're saying in real-time as you speak
+- **Streaming TTS**: Faster response times with streaming audio synthesis
+- **Improved Performance**: Better voice activity detection and faster processing
+- **Configurable TTS Speed**: Adjust speech speed with `--tts-speed` parameter
 
 ## Key Features
 
-- **Speech Recognition (STT)**: High-speed speech recognition using Faster Whisper
+- **Real-time Speech Recognition (STT)**: Live transcription using RealtimeSTT with Whisper
 - **Conversational AI (LLM)**: Local LLM based on Llama.cpp (Gemma 3 12B)
-- **Speech Synthesis (TTS)**: Fast response with Edge-TTS or Coqui-TTS (with voice cloning support)
+- **Streaming Speech Synthesis (TTS)**: Real-time voice synthesis with RealtimeTTS using Coqui XTTS v2
 - **Complete Offline Operation**: All processing is done locally, ensuring privacy
+- **Voice Cloning**: Clone any voice with a short audio sample
 
 ## Installation
 
@@ -59,42 +68,22 @@ agentvox
 
 Speak into your microphone and the AI will respond with voice.
 
-### Voice Selection
+### Voice Configuration
 
 ```bash
-# List all available voices
-agentvox --list-voices
-
-# Use preset voices
-agentvox --voice male       # Korean male voice
-agentvox --voice female     # Korean female voice
-agentvox --voice multilingual  # Korean multilingual male (default)
-
-# Use any Edge-TTS voice directly
-agentvox --voice en-US-JennyNeural
-agentvox --voice ja-JP-NanamiNeural
-agentvox --voice zh-CN-XiaoxiaoNeural
-```
-
-### TTS Engine Selection
-
-```bash
-# Use Edge-TTS (default)
-agentvox --tts-engine edge
-
-# Use Coqui-TTS
-agentvox --tts-engine coqui
-
-# List available Coqui-TTS models
-agentvox --list-tts-models
-
-# Voice cloning with Coqui-TTS
-agentvox --tts-engine coqui --speaker-wav speaker_sample.wav
+# Voice cloning with Coqui-TTS (default engine)
+agentvox --speaker-wav speaker_sample.wav
 
 # Record your own voice sample for cloning
 agentvox --record-speaker
 # Then use the recorded sample
-agentvox --tts-engine coqui --speaker-wav speaker_ko.wav
+agentvox --speaker-wav speaker_ko.wav
+
+# Adjust TTS speed (1.0 is normal, higher is faster)
+agentvox --tts-speed 1.5  # 50% faster
+agentvox --tts-speed 1.3  # 30% faster (default)
+agentvox --tts-speed 1.0  # Normal speed
+agentvox --tts-speed 0.8  # 20% slower
 ```
 
 ### Advanced Configuration
@@ -164,14 +153,14 @@ The system automatically detects the best available device:
 ### Combined Examples
 
 ```bash
-# English female voice + English recognition + longer responses
-agentvox --voice en-US-JennyNeural --stt-language en --llm-max-tokens 1024
+# English recognition + fast speech + longer responses
+agentvox --stt-language en --tts-speed 1.5 --llm-max-tokens 1024
 
-# Japanese voice + high accuracy STT + creative responses
-agentvox --voice ja-JP-NanamiNeural --stt-beam-size 10 --llm-temperature 0.9
+# High accuracy STT + creative responses + voice cloning
+agentvox --stt-beam-size 10 --llm-temperature 0.9 --speaker-wav voice_sample.wav
 
-# Use custom model path
-agentvox --model /path/to/your/model.gguf
+# Use custom model path with fast TTS
+agentvox --model /path/to/your/model.gguf --tts-speed 1.4
 ```
 
 ## Python API Usage
@@ -183,7 +172,8 @@ from agentvox import VoiceAssistant, ModelConfig, AudioConfig
 model_config = ModelConfig(
     stt_model="base",
     llm_temperature=0.7,
-    tts_voice="en-US-JennyNeural"  # English female voice
+    tts_speed=1.3,  # Adjust TTS speed
+    speaker_wav="voice_sample.wav"  # Optional: voice cloning
 )
 
 audio_config = AudioConfig()
@@ -231,15 +221,15 @@ tts.speak(response)
 ### Required Packages
 
 - torch >= 2.0.0
-- faster-whisper
+- realtimestt (Real-time speech-to-text)
+- realtimetts[coqui] (Real-time text-to-speech with Coqui engine)
 - llama-cpp-python
-- edge-tts
 - numpy
-- speech_recognition
 - pygame
 - sounddevice
 - soundfile
 - pyaudio
+- hangul-romanize (for Korean language support)
 
 ## Project Structure
 
@@ -258,6 +248,25 @@ agentvox/
 ```
 
 ## Troubleshooting
+
+### First Run Model Download
+
+On first run, the Coqui TTS model (XTTS v2, ~1.86GB) will be automatically downloaded. This only happens once.
+
+### Multiprocessing Errors on macOS/Windows
+
+If you encounter multiprocessing errors, ensure your script uses:
+```python
+if __name__ == "__main__":
+    # Your code here
+```
+
+### ctranslate2 Version Issues
+
+If you get ctranslate2 compatibility errors:
+```bash
+pip install ctranslate2==4.4.0
+```
 
 ### PyAudio Installation Error
 
@@ -293,6 +302,14 @@ For large LLM models:
 - Close other audio applications
 - Adjust VAD threshold: `--stt-vad-threshold 0.3`
 - Reduce silence duration for faster response: `--stt-vad-min-silence-duration 500`
+
+### Speaker Echo/Feedback Issues
+
+If the TTS output is being picked up by the microphone:
+- Use headphones instead of speakers
+- Reduce speaker volume
+- Increase the distance between microphone and speakers
+- The system automatically pauses STT during TTS playback to minimize echo
 
 ### Model File Not Found
 
@@ -330,18 +347,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### Third-Party Licenses
 
 This project uses several third-party libraries:
-- **edge-tts**: LGPL-3.0 License (for TTS functionality)
-- **coqui-tts**: Mozilla Public License 2.0 (for advanced TTS with voice cloning)
-- **faster-whisper**: MIT License (for STT functionality)
+- **RealtimeSTT**: MIT License (for real-time speech-to-text)
+- **RealtimeTTS**: MIT License (for real-time text-to-speech)
+- **coqui-tts**: Mozilla Public License 2.0 (used by RealtimeTTS for voice synthesis)
+- **faster-whisper**: MIT License (used by RealtimeSTT for speech recognition)
 - **llama-cpp-python**: MIT License (for LLM inference)
 - **Gemma Model**: Check the model provider's license terms
 
 For complete third-party license information, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 **Note on copyleft licenses**: 
-- The edge-tts library (LGPL-3.0) is used as a library dependency without modifications. Users are free to replace edge-tts with their own version if desired.
-- The coqui-tts library (MPL-2.0) is used as an optional dependency for advanced TTS features. The MPL-2.0 license only requires that modifications to coqui-tts itself be shared, not your application code.
-- Neither the LGPL-3.0 license of edge-tts nor the MPL-2.0 license of coqui-tts affects the MIT licensing of this project's source code.
+- The coqui-tts library (MPL-2.0) is used as a dependency through RealtimeTTS. The MPL-2.0 license only requires that modifications to coqui-tts itself be shared, not your application code.
+- The MPL-2.0 license of coqui-tts does not affect the MIT licensing of this project's source code.
 
 ## Contributing
 
@@ -363,15 +380,29 @@ python -m pytest tests/
 
 ## Multilingual Support
 
-Edge Gemma Speak supports multiple languages through Edge-TTS. You can use voices in various languages:
+AgentVox supports multiple languages through both STT and TTS:
 
-- **English**: en-US, en-GB, en-AU, en-CA, en-IN
-- **Japanese**: ja-JP
-- **Chinese**: zh-CN, zh-TW, zh-HK
-- **Spanish**: es-ES, es-MX
-- **French**: fr-FR, fr-CA
-- **German**: de-DE
-- **Korean**: ko-KR
+### Speech Recognition (STT)
+Set the language with `--stt-language`:
+- **Korean**: ko (default)
+- **English**: en
+- **Japanese**: ja
+- **Chinese**: zh
+- **Spanish**: es
+- **French**: fr
+- **German**: de
 - And many more...
 
-Use `--list-voices` to see all available voices and their language codes.
+### Text-to-Speech (TTS)
+The Coqui XTTS v2 model supports multiple languages automatically. For best results:
+- Use voice cloning with a native speaker's voice sample
+- The model will automatically detect and use the appropriate language
+
+Example:
+```bash
+# English conversation with cloned voice
+agentvox --stt-language en --speaker-wav english_voice.wav
+
+# Japanese conversation
+agentvox --stt-language ja --speaker-wav japanese_voice.wav
+```

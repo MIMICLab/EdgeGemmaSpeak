@@ -83,6 +83,13 @@ def download_model():
     
 
 def main():
+    # Required for multiprocessing on macOS/Windows
+    import multiprocessing
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass  # Already set
+    
     parser = argparse.ArgumentParser(description="AgentVox - Voice Assistant")
     parser.add_argument("--model", type=str, help="Path to GGUF model file")
     parser.add_argument("--stt-model", type=str, default="base", 
@@ -92,16 +99,16 @@ def main():
                        choices=["cpu", "cuda", "mps", "auto"],
                        help="Device to use for inference (default: auto-detect)")
     parser.add_argument("--voice", type=str, default="multilingual",
-                       help="TTS voice: use preset (male/female/multilingual) or any Edge-TTS voice name")
-    parser.add_argument("--tts-engine", type=str, default="edge",
-                       choices=["edge", "coqui"],
-                       help="TTS engine to use (default: edge)")
+                       help="TTS voice preset (male/female/multilingual) - for compatibility")
+    parser.add_argument("--tts-engine", type=str, default="coqui",
+                       choices=["coqui"],
+                       help="TTS engine to use (default: coqui)")
     parser.add_argument("--speaker-wav", type=str, default=None,
                        help="Speaker voice sample file for voice cloning (Coqui only)")
     parser.add_argument("--download-model", action="store_true",
                        help="Download the default Gemma model")
     parser.add_argument("--list-voices", action="store_true",
-                       help="List all available Korean TTS voices")
+                       help="[Deprecated] List voices - not supported with Coqui engine")
     parser.add_argument("--list-tts-models", action="store_true",
                        help="List all available Coqui TTS models")
     parser.add_argument("--record-speaker", action="store_true",
@@ -121,6 +128,10 @@ def main():
     parser.add_argument("--stt-vad-min-silence-duration", type=int, default=1000,
                        help="Minimum silence duration in ms before cutting off (default: 1000)")
     
+    # TTS 파라미터
+    parser.add_argument("--tts-speed", type=float, default=1.3,
+                       help="TTS speed (1.0 is normal, higher is faster, default: 1.3)")
+    
     # LLM 파라미터
     parser.add_argument("--llm-max-tokens", type=int, default=512,
                        help="Maximum tokens for LLM response (default: 512)")
@@ -138,161 +149,23 @@ def main():
         sys.exit(0)
     
     if args.list_tts_models:
-        # Import locally to avoid loading TTS unless needed
-        from .voice_assistant import CoquiTTSModule
-        
-        print("\nFetching available Coqui TTS models...")
+        print("\nCoqui TTS models available:")
         print("=" * 80)
-        
-        try:
-            models = CoquiTTSModule.list_models()
-            
-            # Organize models by type
-            multilingual_models = []
-            single_lang_models = []
-            vocoder_models = []
-            
-            for model in models:
-                if "vocoder" in model:
-                    vocoder_models.append(model)
-                elif "multilingual" in model or "multi-dataset" in model:
-                    multilingual_models.append(model)
-                else:
-                    single_lang_models.append(model)
-            
-            # Display models by category
-            if multilingual_models:
-                print("\n[Multilingual Models - Support voice cloning]")
-                for model in multilingual_models:
-                    print(f"  {model}")
-            
-            if single_lang_models:
-                print("\n[Single Language Models]")
-                # Group by language
-                lang_models = {}
-                for model in single_lang_models:
-                    parts = model.split('/')
-                    if len(parts) >= 2:
-                        lang = parts[1]
-                        if lang not in lang_models:
-                            lang_models[lang] = []
-                        lang_models[lang].append(model)
-                
-                for lang, models in sorted(lang_models.items()):
-                    print(f"\n  {lang.upper()}:")
-                    for model in models[:5]:  # Show first 5 per language
-                        print(f"    {model}")
-                    if len(models) > 5:
-                        print(f"    ... and {len(models) - 5} more")
-            
-            print(f"\n\nTotal models available: {len(models)}")
-            print("\nUsage examples:")
-            print("  agentvox --tts-engine coqui")
-            print("  agentvox --tts-engine coqui --stt-language en")
-            print("\nVoice cloning example:")
-            print("  agentvox --tts-engine coqui --speaker-wav path/to/voice_sample.wav")
-            
-        except Exception as e:
-            print(f"Error fetching TTS models: {e}")
-            print("Make sure TTS is installed: pip install TTS")
-            
+        print("\nThe default model used is: tts_models/multilingual/multi-dataset/xtts_v2")
+        print("\nThis model supports:")
+        print("  - Multiple languages (Korean, English, Japanese, Chinese, etc.)")
+        print("  - Voice cloning with a speaker WAV file")
+        print("\nUsage example:")
+        print("  agentvox --speaker-wav path/to/voice_sample.wav")
         print("=" * 80)
         sys.exit(0)
     
     if args.list_voices:
-        import subprocess
-        import json
-        
-        print("\nFetching available Edge-TTS voices...")
-        print("=" * 70)
-        
-        try:
-            # Run edge-tts --list-voices command
-            result = subprocess.run(
-                ["edge-tts", "--list-voices"], 
-                capture_output=True, 
-                text=True,
-                check=True
-            )
-            
-            # Parse the table output
-            voices = []
-            lines = result.stdout.strip().split('\n')
-            
-            # Skip header lines (first two lines are header and separator)
-            if len(lines) > 2:
-                for line in lines[2:]:
-                    # Parse table columns
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        name = parts[0]
-                        gender = parts[1]
-                        
-                        # Extract locale from name (format: lang-COUNTRY-NameNeural)
-                        locale_parts = name.split('-')
-                        if len(locale_parts) >= 2:
-                            locale = f"{locale_parts[0]}-{locale_parts[1]}"
-                        else:
-                            locale = "Unknown"
-                        
-                        voices.append({
-                            'name': name,
-                            'gender': gender,
-                            'locale': locale
-                        })
-            
-            # Group by language
-            voices_by_lang = {}
-            for voice in voices:
-                if 'locale' in voice:
-                    lang = voice['locale'].split('-')[0]
-                    if lang not in voices_by_lang:
-                        voices_by_lang[lang] = []
-                    voices_by_lang[lang].append(voice)
-            
-            # Display voices grouped by language
-            print("\nAvailable Edge-TTS voices by language:")
-            print("=" * 70)
-            
-            # Show Korean voices first
-            if 'ko' in voices_by_lang:
-                print("\n[Korean Voices]")
-                for voice in voices_by_lang['ko']:
-                    gender = voice.get('gender', 'Unknown')
-                    print(f"  {voice['name']:<35} ({gender}, {voice.get('locale', 'Unknown')})")
-            
-            # Show other popular languages
-            for lang in ['en', 'ja', 'zh', 'es', 'fr', 'de']:
-                if lang in voices_by_lang:
-                    lang_name = {
-                        'en': 'English', 'ja': 'Japanese', 'zh': 'Chinese',
-                        'es': 'Spanish', 'fr': 'French', 'de': 'German'
-                    }.get(lang, lang.upper())
-                    print(f"\n[{lang_name} Voices]")
-                    for voice in voices_by_lang[lang][:5]:  # Show first 5 voices
-                        gender = voice.get('gender', 'Unknown')
-                        print(f"  {voice['name']:<35} ({gender}, {voice.get('locale', 'Unknown')})")
-                    if len(voices_by_lang[lang]) > 5:
-                        print(f"  ... and {len(voices_by_lang[lang]) - 5} more")
-            
-            # Show total count
-            print(f"\n\nTotal voices available: {len(voices)}")
-            print("\nUsage examples:")
-            print("  agentvox --voice ko-KR-InJoonNeural")
-            print("  agentvox --voice en-US-JennyNeural")
-            print("  agentvox --voice ja-JP-NanamiNeural")
-            
-            print("\nQuick presets:")
-            print("  agentvox --voice male     (Korean male)")
-            print("  agentvox --voice female   (Korean female)")
-            
-        except subprocess.CalledProcessError:
-            print("Error: Could not fetch Edge-TTS voices.")
-            print("Make sure edge-tts is installed: pip install edge-tts")
-        except Exception as e:
-            print(f"Error: {e}")
-            
-        print("=" * 70)
+        print("\n[Deprecated] --list-voices is not supported with Coqui engine")
+        print("\nCoqui TTS uses voice cloning instead of preset voices.")
+        print("To use a specific voice, record or provide a speaker WAV file:")
+        print("  agentvox --record-speaker")
+        print("  agentvox --speaker-wav path/to/voice_sample.wav")
         sys.exit(0)
     
     if args.record_speaker:
@@ -315,39 +188,9 @@ def main():
     
     # Create configurations
     
-    # Map voice choice to actual voice name
-    voice_map = {
-        "male": "ko-KR-InJoonNeural",
-        "female": "ko-KR-SunHiNeural",
-        "multilingual": "ko-KR-HyunsuMultilingualNeural"
-    }
-    
-    # Use preset or direct voice name
-    tts_voice = voice_map.get(args.voice, args.voice)
-    
-    # Extract language from TTS voice if STT language not explicitly set
-    if args.stt_language == "ko" and tts_voice not in voice_map.values():
-        # Extract language code from voice name (e.g., "en-US-JennyNeural" -> "en")
-        voice_parts = tts_voice.split('-')
-        if len(voice_parts) >= 2:
-            voice_lang = voice_parts[0]
-            # Only override if it's a known language code
-            if voice_lang in ['en', 'ja', 'zh', 'es', 'fr', 'de', 'ko']:
-                stt_language = voice_lang
-                print(f"Notice: STT language automatically set to '{stt_language}' to match TTS voice '{tts_voice}'")
-            else:
-                stt_language = args.stt_language
-        else:
-            stt_language = args.stt_language
-    else:
-        stt_language = args.stt_language
-    
-    # Warn if languages don't match
-    if tts_voice not in voice_map:
-        voice_lang = tts_voice.split('-')[0] if '-' in tts_voice else None
-        if voice_lang and voice_lang != stt_language:
-            print(f"Warning: TTS voice language '{voice_lang}' doesn't match STT language '{stt_language}'")
-            print(f"         Consider using --stt-language {voice_lang} for better recognition")
+    # Voice presets are for compatibility only - Coqui uses voice cloning
+    tts_voice = args.voice  # Keep for compatibility
+    stt_language = args.stt_language
     
     # Set device (auto-detection will happen in ModelConfig.__post_init__)
     device = args.device if args.device else "auto"
@@ -367,6 +210,7 @@ def main():
         tts_engine=args.tts_engine,
         tts_voice=tts_voice,
         speaker_wav=args.speaker_wav,
+        tts_speed=args.tts_speed,
         # LLM parameters
         llm_max_tokens=args.llm_max_tokens,
         llm_temperature=args.llm_temperature,
