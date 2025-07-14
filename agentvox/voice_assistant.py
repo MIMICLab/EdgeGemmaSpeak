@@ -88,73 +88,15 @@ class STTModule:
     def __init__(self, config: ModelConfig):
         self.config = config
         
-        # Initialize RealtimeSTT recorder
+        # Initialize RealtimeSTT recorder - simplified
         self.recorder = AudioToTextRecorder(
             model=config.stt_model,
             language=config.stt_language,
-            compute_type="float16" if config.device == "cuda" else "default",
-            gpu_device_index=0 if config.device == "cuda" else 0,  # Use 0 instead of None
-            device="cuda" if config.device == "cuda" else "cpu",
-            on_recording_start=self.on_recording_start,
-            on_recording_stop=self.on_recording_stop,
-            on_transcription_start=self.on_transcription_start,
-            beam_size=config.stt_beam_size,
-            initial_prompt=None,
-            suppress_tokens=[-1],
-            silero_sensitivity=config.stt_vad_threshold,
-            silero_use_onnx=True,  # Use ONNX for better performance
-            webrtc_sensitivity=3,
-            post_speech_silence_duration=config.stt_vad_min_silence_duration_ms / 1000.0,
-            min_length_of_recording=1.0,
-            enable_realtime_transcription=True,
-            realtime_model_type="tiny",
-            on_realtime_transcription_update=self.on_realtime_update,
-            on_realtime_transcription_stabilized=self.on_realtime_stabilized,
-            # Add echo suppression
+            device=config.device,
+            spinner=False,
             use_microphone=True,
-            spinner=False,  # Disable spinner to reduce console noise
             level=logging.WARNING
         )
-        
-        self.is_recording = False
-        self.current_text = ""
-        self.realtime_text = ""
-        
-    def on_recording_start(self):
-        """Callback when recording starts"""
-        self.is_recording = True
-        is_korean = self.config.stt_language.startswith('ko')
-        if is_korean:
-            print("녹음 시작...")
-        else:
-            print("Recording started...")
-            
-    def on_recording_stop(self):
-        """Callback when recording stops"""
-        self.is_recording = False
-        is_korean = self.config.stt_language.startswith('ko')
-        if is_korean:
-            print("녹음 종료.")
-        else:
-            print("Recording stopped.")
-            
-    def on_transcription_start(self, audio_data=None):
-        """Callback when transcription starts"""
-        is_korean = self.config.stt_language.startswith('ko')
-        if is_korean:
-            print("텍스트 변환 중...")
-        else:
-            print("Transcribing...")
-            
-    def on_realtime_update(self, text):
-        """Callback for real-time transcription updates"""
-        self.realtime_text = text
-        # Print real-time updates
-        print(f"\r{text}", end='', flush=True)
-        
-    def on_realtime_stabilized(self, text):
-        """Callback for stabilized real-time transcription"""
-        self.current_text = text
         
     def transcribe_once(self) -> Optional[str]:
         """Listen and transcribe once"""
@@ -165,21 +107,12 @@ class STTModule:
         else:
             print("\nPlease speak...")
             
-        # Clear previous text
-        self.current_text = ""
-        self.realtime_text = ""
+        # Simply get text
+        text = self.recorder.text()
         
-        # Get transcription using callback
-        result = []
-        
-        def process_text(text):
-            result.append(text)
-            print(f"\n최종 텍스트: {text}" if is_korean else f"\nFinal text: {text}")
-            
-        self.recorder.text(process_text)
-        
-        if result:
-            return result[0]
+        if text:
+            print(f"\n사용자: {text}" if is_korean else f"\nUser: {text}")
+            return text
         return None
 
 class LlamaTokenizer:
@@ -382,58 +315,27 @@ class TTSModule:
         self.engine = CoquiEngine(
             model_name=config.tts_model,
             device=config.device,
-            voice=config.speaker_wav,  # Use voice parameter for cloning reference
+            voice=config.speaker_wav,
             language=config.stt_language,
-            speed=config.tts_speed  # Use configurable speed
+            speed=config.tts_speed
         )
         
         # Initialize text-to-audio stream
-        self.stream = TextToAudioStream(
-            self.engine,
-            on_audio_stream_start=self.on_stream_start,
-            on_audio_stream_stop=self.on_stream_stop
-        )
+        self.stream = TextToAudioStream(self.engine)
         
-        self.is_speaking = False
-        
-    def on_stream_start(self):
-        """Callback when audio stream starts"""
-        self.is_speaking = True
-        
-    def on_stream_stop(self):
-        """Callback when audio stream stops"""
-        self.is_speaking = False
-        
-    def speak_streaming(self, text: str):
-        """Stream text to speech with real-time synthesis"""
-        # Check for empty text
+    def speak(self, text: str):
+        """Speak text and wait until complete"""
         if not text or not text.strip():
-            print("Warning: Empty text - TTS skipped")
             return
             
         try:
-            # Feed text to stream
+            # Feed and play - blocking call
             self.stream.feed(text)
-            
-            # Play the stream
-            self.stream.play_async(
-                fast_sentence_fragment=True,
-                fast_sentence_fragment_allsentences=True,
-                minimum_sentence_length=10,
-                minimum_first_fragment_length=5,
-                log_synthesized_text=False
-            )
-            
-            # Wait for playback to complete
-            while self.stream.is_playing() or self.is_speaking:
-                time.sleep(0.1)
+            self.stream.play()
                 
         except Exception as e:
-            print(f"TTS streaming error: {e}")
+            print(f"TTS error: {e}")
             
-    def speak(self, text: str):
-        """Legacy method for compatibility"""
-        self.speak_streaming(text)
 
 class VoiceAssistant:
     """Main class for managing the entire voice conversation system"""
@@ -442,7 +344,6 @@ class VoiceAssistant:
         self.model_config = model_config
         self.audio_config = audio_config
         
-        # Check if using Korean voice
         is_korean = model_config.stt_language.startswith('ko')
         
         if is_korean:
@@ -453,106 +354,43 @@ class VoiceAssistant:
         self.stt = STTModule(model_config)
         self.llm = LLMModule(model_config)
         self.tts = TTSModule(model_config)
-        
-        # Flag to prevent STT during TTS playback
-        self.is_speaking = False
-        
-    def process_conversation(self, input_text: str) -> str:
-        """Process text input and generate response"""
-        # Generate response with LLM
-        response = self.llm.generate_response(input_text)
-        return response
     
     def run_conversation_loop(self):
-        """Run conversation loop"""
-        # Check if using Korean voice
+        """Run conversation loop - simple version"""
         is_korean = self.model_config.stt_language.startswith('ko')
         
         if is_korean:
             print("음성 대화 시스템이 시작되었습니다.")
-            print("명령어: '종료' - 프로그램 종료, '초기화' - 대화 내용 초기화, '대화 내역' - 대화 히스토리 확인")
+            print("종료하려면 '종료'라고 말하세요.")
         else:
             print("Voice conversation system started.")
-            print("Commands: 'exit' - Exit program, 'reset' - Reset conversation, 'history' - View conversation history")
+            print("Say 'exit' to quit.")
         print("-" * 50)
         
         while True:
-            # Get voice input using RealtimeSTT
+            # 1. Listen to user
             user_input = self.stt.transcribe_once()
             
-            if user_input:
+            if not user_input:
+                continue
+                
+            # Check exit command
+            if "exit" in user_input.lower() or "종료" in user_input:
                 if is_korean:
-                    print(f"사용자: {user_input}")
+                    print("\n대화를 종료합니다.")
                 else:
-                    print(f"User: {user_input}")
-                
-                # Process special commands
-                if "exit" in user_input.lower() or "종료" in user_input:
-                    if is_korean:
-                        self.tts.speak_streaming("대화를 종료합니다. 안녕히 가세요.")
-                    else:
-                        self.tts.speak_streaming("Ending conversation. Goodbye.")
-                    break
-                elif "reset" in user_input.lower() or "초기화" in user_input:
-                    self.llm.reset_conversation()
-                    if is_korean:
-                        self.tts.speak_streaming("대화 내용이 초기화되었습니다. 새로운 대화를 시작해주세요.")
-                        print("어시스턴트: 대화 내용이 초기화되었습니다.")
-                    else:
-                        self.tts.speak_streaming("Conversation has been reset. Please start a new conversation.")
-                        print("Assistant: Conversation has been reset.")
-                    continue
-                elif "history" in user_input.lower() or "대화 내역" in user_input or "대화 기록" in user_input:
-                    if is_korean:
-                        print("\n=== 대화 히스토리 ===")
-                    else:
-                        print("\n=== Conversation History ===")
-                    for i, turn in enumerate(self.llm.conversation_history):
-                        print(f"{i+1}. {turn}")
-                    print("==================")
-                    
-                    # Estimate current prompt token count (rough calculation)
-                    current_prompt = self.llm._build_prompt()
-                    estimated_tokens = len(current_prompt) // 4  # Roughly 1 token per 4 characters
-                    if is_korean:
-                        print(f"현재 컨텍스트 사용량: 약 {estimated_tokens}/4096 토큰")
-                    else:
-                        print(f"Current context usage: approx {estimated_tokens}/4096 tokens")
-                    print("")
-                    
-                    if is_korean:
-                        self.tts.speak_streaming(f"현재 {len(self.llm.conversation_history)}개의 대화가 기록되어 있습니다.")
-                    else:
-                        self.tts.speak_streaming(f"Currently {len(self.llm.conversation_history)} conversations are recorded.")
-                    continue
-                
-                # Process normal conversation
-                response = self.process_conversation(user_input)
-                if is_korean:
-                    print(f"어시스턴트: {response}")
-                else:
-                    print(f"Assistant: {response}")
-                
-                # Respond with voice using streaming TTS
-                self.is_speaking = True
-                # Pause STT during TTS playback
-                self.stt.recorder.set_microphone(False)
-                
-                # Small delay before speaking to ensure STT is paused
-                time.sleep(0.2)
-                
-                # Speak and wait for completion
-                self.tts.speak_streaming(response)
-                
-                # Small delay after speaking to let audio fade out
-                time.sleep(0.3)
-                
-                # Resume STT after TTS
-                self.is_speaking = False
-                self.stt.recorder.set_microphone(True)
-        
-        # Cleanup
-        self.stt.recorder.shutdown()
+                    print("\nEnding conversation.")
+                break
+            
+            # 2. Get LLM response
+            response = self.llm.generate_response(user_input)
+            print(f"\n어시스턴트: {response}" if is_korean else f"\nAssistant: {response}")
+            
+            # 3. Speak response - this blocks until complete
+            self.tts.speak(response)
+            
+            # 4. Loop back to listening
+            # No need for delays or complex state management
 
 # Main execution function
 def main():

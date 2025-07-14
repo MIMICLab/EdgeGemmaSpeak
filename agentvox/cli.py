@@ -129,7 +129,7 @@ def main():
                        help="Minimum silence duration in ms before cutting off (default: 1000)")
     
     # TTS 파라미터
-    parser.add_argument("--tts-speed", type=float, default=1.3,
+    parser.add_argument("--tts-speed", type=float, default=1.0,
                        help="TTS speed (1.0 is normal, higher is faster, default: 1.3)")
     
     # LLM 파라미터
