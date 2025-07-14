@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="agentvox",
-    version="0.1.1",
+    version="0.2.0",
     author="MIMIC Lab",
     author_email="",
     description="Edge-based voice assistant using Gemma LLM with STT and TTS capabilities",
