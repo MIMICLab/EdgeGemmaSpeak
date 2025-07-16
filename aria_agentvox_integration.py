@@ -27,8 +27,14 @@ import sys
 import os
 
 # Reduce DDS warnings
-logging.getLogger('SubListener').setLevel(logging.ERROR)
-logging.getLogger('dds').setLevel(logging.ERROR)
+logging.getLogger('SubListener').setLevel(logging.CRITICAL)
+logging.getLogger('dds').setLevel(logging.CRITICAL)
+logging.getLogger().setLevel(logging.ERROR)
+
+# Suppress specific DDS warnings
+import warnings
+warnings.filterwarnings("ignore", message=".*sample lost.*")
+warnings.filterwarnings("ignore", message=".*CRITICAL DDS.*")
 
 # Add paths for Project Aria modules
 sys.path.append(os.path.join(os.path.dirname(__file__), "projectaria/projectaria_eyetracking/projectaria_eyetracking"))
@@ -515,12 +521,13 @@ def main():
         
         # Configure subscription
         config = streaming_client.subscription_config
+        # Temporarily disable audio streaming to reduce DDS warnings
         config.subscriber_data_type = (
-            aria.StreamingDataType.EyeTrack | aria.StreamingDataType.Rgb | aria.StreamingDataType.Audio
+            aria.StreamingDataType.EyeTrack | aria.StreamingDataType.Rgb
         )
         config.message_queue_size[aria.StreamingDataType.EyeTrack] = 3
         config.message_queue_size[aria.StreamingDataType.Rgb] = 1
-        config.message_queue_size[aria.StreamingDataType.Audio] = 20  # Increase audio buffer
+        # config.message_queue_size[aria.StreamingDataType.Audio] = 20  # Disabled for now
         
         # Enable security
         options = aria.StreamingSecurityOptions()
