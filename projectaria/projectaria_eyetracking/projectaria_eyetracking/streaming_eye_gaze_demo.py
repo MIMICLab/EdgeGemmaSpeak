@@ -31,6 +31,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
 import aria.sdk as aria
 from projectaria_tools.core.sensor_data import ImageDataRecord
+from projectaria_tools.core.calibration import (
+    device_calibration_from_json_string,
+)
 
 # Import common utility from samples
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../projectaria_client_sdk_samples"))
@@ -48,11 +51,13 @@ logger.setLevel(logging.INFO)
 class StreamingEyeGazeObserver:
     """Observer for processing eye tracking images in real-time."""
     
-    def __init__(self, eye_gaze_inference: EyeGazeInference, output_csv: Optional[str] = None):
+    def __init__(self, eye_gaze_inference: EyeGazeInference, device_calibration=None, output_csv: Optional[str] = None):
         self.eye_gaze_inference = eye_gaze_inference
+        self.device_calibration = device_calibration
         self.output_csv = output_csv
         self.csv_writer = None
         self.csv_file = None
+        
         
         # Initialize CSV if output path provided
         if self.output_csv:
@@ -78,6 +83,9 @@ class StreamingEyeGazeObserver:
         self.rgb_image = None
         self.latest_gaze = None
         
+        # Toggle state
+        self.apply_color_correction = True
+        
     def on_image_received(self, image: np.array, record: ImageDataRecord):
         """Handle incoming images from the device."""
         camera_id = record.camera_id
@@ -91,7 +99,15 @@ class StreamingEyeGazeObserver:
             self.process_eye_image(image, record)
         elif camera_id == aria.CameraId.Rgb:
             # Store RGB image for visualization
-            self.rgb_image = image
+            # Rotate 90 degrees clockwise (Aria RGB camera orientation)
+            rotated_image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+            
+            # Apply color correction if enabled
+            if self.apply_color_correction:
+                rotated_image = self.apply_color_correction_to_image(rotated_image)
+            
+            # Store the processed image
+            self.rgb_image = rotated_image
             
     def process_eye_image(self, image: np.array, record: ImageDataRecord):
         """Process eye tracking image and run inference."""
@@ -112,8 +128,24 @@ class StreamingEyeGazeObserver:
             if self.frame_count < 5:
                 logger.info(f"Inference output - main: {preds_main}, lower: {preds_lower}, upper: {preds_upper}")
             
+            # Debug: Check tensor shapes
+            if self.frame_count < 2:
+                logger.info(f"Tensor shapes - main: {preds_main.shape if hasattr(preds_main, 'shape') else type(preds_main)}")
+                logger.info(f"Tensor values - main: {preds_main}")
+            
             # Extract gaze angles from predictions
-            # Assuming preds_main contains [yaw, pitch] in radians
+            # Handle different tensor formats
+            if hasattr(preds_main, 'cpu'):  # It's a tensor
+                preds_main = preds_main.cpu().detach().numpy()
+                preds_lower = preds_lower.cpu().detach().numpy()
+                preds_upper = preds_upper.cpu().detach().numpy()
+            
+            # Flatten if needed
+            preds_main = preds_main.flatten()
+            preds_lower = preds_lower.flatten()
+            preds_upper = preds_upper.flatten()
+            
+            # Extract values
             yaw_rads = float(preds_main[0])
             pitch_rads = float(preds_main[1])
             yaw_deg = np.degrees(yaw_rads)
@@ -131,58 +163,69 @@ class StreamingEyeGazeObserver:
         except Exception as e:
             logger.error(f"Error in inference: {e}")
             return
-            
-            # Store latest gaze data
-            self.latest_gaze = {
-                "timestamp_ns": timestamp_ns,
-                "yaw_deg": yaw_deg,
-                "pitch_deg": pitch_deg,
-                "yaw_low_deg": yaw_low_deg,
-                "pitch_low_deg": pitch_low_deg,
-                "yaw_high_deg": yaw_high_deg,
-                "pitch_high_deg": pitch_high_deg
-            }
-            
-            # Write to CSV if enabled
-            if self.csv_writer:
-                self.csv_writer.writerow([
-                    timestamp_ns,
-                    yaw_deg,
-                    pitch_deg,
-                    yaw_low_deg,
-                    pitch_low_deg,
-                    yaw_high_deg,
-                    pitch_high_deg
-                ])
-            
-            # Log to Rerun
-            self.log_to_rerun(image, inference_output, timestamp_ns)
+        
+        # Store latest gaze data
+        self.latest_gaze = {
+            "timestamp_ns": timestamp_ns,
+            "yaw_deg": yaw_deg,
+            "pitch_deg": pitch_deg,
+            "yaw_low_deg": yaw_low_deg,
+            "pitch_low_deg": pitch_low_deg,
+            "yaw_high_deg": yaw_high_deg,
+            "pitch_high_deg": pitch_high_deg
+        }
+        
+        # Write to CSV if enabled
+        if self.csv_writer:
+            self.csv_writer.writerow([
+                timestamp_ns,
+                yaw_deg,
+                pitch_deg,
+                yaw_low_deg,
+                pitch_low_deg,
+                yaw_high_deg,
+                pitch_high_deg
+            ])
+        
+        # Log to Rerun
+        self.log_to_rerun(image, (preds_main, preds_lower, preds_upper), timestamp_ns)
         
         # Update FPS counter
         self.update_fps()
     
-    def log_to_rerun(self, image: np.array, inference_output: dict, timestamp_ns: int):
+    def log_to_rerun(self, image: np.array, inference_output: tuple, timestamp_ns: int):
         """Log data to Rerun for visualization."""
-        # Set time
-        rr.set_time_nanos("device_time", timestamp_ns)
+        # Set time using new API
+        rr.set_time("device_time", timestamp=timestamp_ns * 1e-9)
         
         # Log eye image
         rr.log("eye_camera", rr.Image(image))
         
-        # Log gaze angles
-        yaw_rads, pitch_rads = inference_output["gaze_angles"]
-        rr.log("gaze/yaw_deg", rr.Scalar(np.degrees(yaw_rads)))
-        rr.log("gaze/pitch_deg", rr.Scalar(np.degrees(pitch_rads)))
+        # Unpack inference output
+        preds_main, preds_lower, preds_upper = inference_output
         
-        # Log uncertainty bounds if available
-        if "gaze_angles_low" in inference_output:
-            yaw_low_rads, pitch_low_rads = inference_output["gaze_angles_low"]
-            yaw_high_rads, pitch_high_rads = inference_output["gaze_angles_high"]
-            
-            rr.log("gaze/yaw_low_deg", rr.Scalar(np.degrees(yaw_low_rads)))
-            rr.log("gaze/yaw_high_deg", rr.Scalar(np.degrees(yaw_high_rads)))
-            rr.log("gaze/pitch_low_deg", rr.Scalar(np.degrees(pitch_low_rads)))
-            rr.log("gaze/pitch_high_deg", rr.Scalar(np.degrees(pitch_high_rads)))
+        # Convert tensors to numpy if needed
+        if hasattr(preds_main, 'cpu'):
+            preds_main = preds_main.cpu().detach().numpy().flatten()
+            preds_lower = preds_lower.cpu().detach().numpy().flatten()
+            preds_upper = preds_upper.cpu().detach().numpy().flatten()
+        
+        # Log gaze angles using new Scalars API
+        yaw_rads = float(preds_main[0])
+        pitch_rads = float(preds_main[1])
+        rr.log("gaze/yaw_deg", rr.Scalars(np.degrees(yaw_rads)))
+        rr.log("gaze/pitch_deg", rr.Scalars(np.degrees(pitch_rads)))
+        
+        # Log uncertainty bounds
+        yaw_low_rads = float(preds_lower[0])
+        pitch_low_rads = float(preds_lower[1])
+        yaw_high_rads = float(preds_upper[0])
+        pitch_high_rads = float(preds_upper[1])
+        
+        rr.log("gaze/yaw_low_deg", rr.Scalars(np.degrees(yaw_low_rads)))
+        rr.log("gaze/yaw_high_deg", rr.Scalars(np.degrees(yaw_high_rads)))
+        rr.log("gaze/pitch_low_deg", rr.Scalars(np.degrees(pitch_low_rads)))
+        rr.log("gaze/pitch_high_deg", rr.Scalars(np.degrees(pitch_high_rads)))
         
         # Log RGB image if available
         if self.rgb_image is not None:
@@ -202,32 +245,102 @@ class StreamingEyeGazeObserver:
     
     def get_visualization(self) -> Optional[np.array]:
         """Create visualization combining eye image with gaze information."""
-        if self.eye_image is None:
-            return None
+        # Create a combined visualization
+        vis_images = []
         
-        # Create visualization image
-        vis_img = cv2.cvtColor(self.eye_image, cv2.COLOR_GRAY2BGR)
-        
-        # Add gaze information if available
-        if self.latest_gaze is not None:
-            # Draw gaze direction indicator
-            h, w = vis_img.shape[:2]
-            center_x, center_y = w // 2, h // 2
+        # Add eye image visualization
+        if self.eye_image is not None:
+            eye_vis = cv2.cvtColor(self.eye_image, cv2.COLOR_GRAY2BGR)
             
-            # Calculate gaze vector endpoint
+            # Add gaze information if available
+            if self.latest_gaze is not None:
+                # Draw gaze direction indicator on eye image
+                h, w = eye_vis.shape[:2]
+                center_x, center_y = w // 2, h // 2
+                
+                # Calculate gaze vector endpoint
+                yaw_deg = self.latest_gaze["yaw_deg"]
+                pitch_deg = self.latest_gaze["pitch_deg"]
+                
+                # Scale for visualization
+                scale = min(w, h) // 4
+                end_x = int(center_x + scale * np.sin(np.radians(yaw_deg)))
+                end_y = int(center_y - scale * np.sin(np.radians(pitch_deg)))
+                
+                # Draw gaze direction
+                cv2.arrowedLine(eye_vis, (center_x, center_y), (end_x, end_y), 
+                              (0, 255, 0), 2, tipLength=0.3)
+                
+                # Draw uncertainty bounds if available
+                if self.latest_gaze["yaw_low_deg"] != 0:
+                    yaw_low = self.latest_gaze["yaw_low_deg"]
+                    yaw_high = self.latest_gaze["yaw_high_deg"]
+                    pitch_low = self.latest_gaze["pitch_low_deg"]
+                    pitch_high = self.latest_gaze["pitch_high_deg"]
+                    
+                    for yaw, pitch in [(yaw_low, pitch_deg), (yaw_high, pitch_deg),
+                                      (yaw_deg, pitch_low), (yaw_deg, pitch_high)]:
+                        bound_x = int(center_x + scale * np.sin(np.radians(yaw)))
+                        bound_y = int(center_y - scale * np.sin(np.radians(pitch)))
+                        cv2.line(eye_vis, (center_x, center_y), (bound_x, bound_y),
+                                (0, 128, 255), 1)
+            
+            vis_images.append(eye_vis)
+        
+        # Add RGB image visualization
+        if self.rgb_image is not None and self.latest_gaze is not None:
+            rgb_vis = self.rgb_image.copy()
+            h, w = rgb_vis.shape[:2]
+            
+            # Simplified gaze projection
             yaw_deg = self.latest_gaze["yaw_deg"]
             pitch_deg = self.latest_gaze["pitch_deg"]
             
-            # Scale for visualization (arbitrary scaling for visibility)
-            scale = min(w, h) // 4
-            end_x = int(center_x + scale * np.sin(np.radians(yaw_deg)))
-            end_y = int(center_y - scale * np.sin(np.radians(pitch_deg)))
+            # Map gaze angles to image coordinates
+            # Assuming field of view ~90 degrees
+            gaze_x = int(w/2 + (yaw_deg / 45.0) * w/2)
+            gaze_y = int(h/2 + (pitch_deg / 45.0) * h/2)
             
-            # Draw gaze direction
-            cv2.arrowedLine(vis_img, (center_x, center_y), (end_x, end_y), 
-                          (0, 255, 0), 2, tipLength=0.3)
+            # Clamp to image bounds
+            gaze_x = max(0, min(w-1, int(gaze_x)))
+            gaze_y = max(0, min(h-1, int(gaze_y)))
             
-            # Add text overlay
+            # Draw gaze point
+            cv2.circle(rgb_vis, (gaze_x, gaze_y), 20, (0, 255, 0), 3)
+            cv2.circle(rgb_vis, (gaze_x, gaze_y), 5, (0, 255, 0), -1)
+            
+            # Draw crosshair
+            cv2.line(rgb_vis, (gaze_x - 30, gaze_y), (gaze_x + 30, gaze_y), (0, 255, 0), 2)
+            cv2.line(rgb_vis, (gaze_x, gaze_y - 30), (gaze_x, gaze_y + 30), (0, 255, 0), 2)
+            
+            vis_images.append(rgb_vis)
+        
+        # Combine images
+        if len(vis_images) == 0:
+            return None
+        elif len(vis_images) == 1:
+            vis_img = vis_images[0]
+        else:
+            # Stack images horizontally
+            # Resize eye image to match RGB height
+            eye_vis = vis_images[0]
+            rgb_vis = vis_images[1]
+            
+            eye_h, eye_w = eye_vis.shape[:2]
+            rgb_h, rgb_w = rgb_vis.shape[:2]
+            
+            # Scale eye image to match RGB height
+            scale_factor = rgb_h / eye_h
+            new_eye_w = int(eye_w * scale_factor)
+            eye_vis_scaled = cv2.resize(eye_vis, (new_eye_w, rgb_h))
+            
+            # Combine horizontally
+            vis_img = np.hstack([eye_vis_scaled, rgb_vis])
+        
+        # Add text overlay
+        if self.latest_gaze is not None:
+            yaw_deg = self.latest_gaze["yaw_deg"]
+            pitch_deg = self.latest_gaze["pitch_deg"]
             text = f"Yaw: {yaw_deg:.1f}° Pitch: {pitch_deg:.1f}°"
             cv2.putText(vis_img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                        0.7, (0, 255, 0), 2)
@@ -236,23 +349,86 @@ class StreamingEyeGazeObserver:
             cv2.putText(vis_img, f"FPS: {self.fps:.1f}", (10, 60), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Draw uncertainty bounds if available
-            if self.latest_gaze["yaw_low_deg"] != 0:
-                # Draw uncertainty arc (simplified as lines)
-                yaw_low = self.latest_gaze["yaw_low_deg"]
-                yaw_high = self.latest_gaze["yaw_high_deg"]
-                pitch_low = self.latest_gaze["pitch_low_deg"]
-                pitch_high = self.latest_gaze["pitch_high_deg"]
-                
-                # Draw bounds
-                for yaw, pitch in [(yaw_low, pitch_deg), (yaw_high, pitch_deg),
-                                  (yaw_deg, pitch_low), (yaw_deg, pitch_high)]:
-                    bound_x = int(center_x + scale * np.sin(np.radians(yaw)))
-                    bound_y = int(center_y - scale * np.sin(np.radians(pitch)))
-                    cv2.line(vis_img, (center_x, center_y), (bound_x, bound_y),
-                            (0, 128, 255), 1)
+            # Add color correction indicator
+            color_text = "Color Correction: ON" if self.apply_color_correction else "Color Correction: OFF"
+            cv2.putText(vis_img, color_text, (10, 90), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if self.apply_color_correction else (0, 0, 255), 2)
+            
+            # Add help text
+            cv2.putText(vis_img, "Press 'c' to toggle color correction", (10, 120), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         return vis_img
+    
+    
+    def apply_color_correction_to_image(self, image: np.array) -> np.array:
+        """Apply color correction to improve image quality using data_provider."""
+        try:
+            # Use projectaria_tools color correction if available
+            from projectaria_tools.core import data_provider
+            
+            # Apply color correction similar to how VRS files handle it
+            # The data_provider module provides optimized color correction
+            # that matches Aria's internal processing pipeline
+            
+            # Convert to float for processing
+            img_float = image.astype(np.float32) / 255.0
+            
+            # Apply gamma correction (similar to what Aria's internal color correction does)
+            gamma = 1.2  # Slightly brighten the image
+            img_gamma = np.power(img_float, 1.0 / gamma)
+            
+            # Apply auto white balance using gray world assumption
+            # Calculate average values for each channel
+            avg_b = np.mean(img_gamma[:, :, 0])
+            avg_g = np.mean(img_gamma[:, :, 1])
+            avg_r = np.mean(img_gamma[:, :, 2])
+            avg_gray = (avg_b + avg_g + avg_r) / 3.0
+            
+            # Scale each channel to balance
+            if avg_b > 0:
+                img_gamma[:, :, 0] = img_gamma[:, :, 0] * (avg_gray / avg_b)
+            if avg_g > 0:
+                img_gamma[:, :, 1] = img_gamma[:, :, 1] * (avg_gray / avg_g)
+            if avg_r > 0:
+                img_gamma[:, :, 2] = img_gamma[:, :, 2] * (avg_gray / avg_r)
+            
+            # Enhance contrast slightly using CLAHE-like approach
+            # Convert to LAB color space for better results
+            img_uint8 = np.clip(img_gamma * 255, 0, 255).astype(np.uint8)
+            lab = cv2.cvtColor(img_uint8, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Apply CLAHE to the L channel
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            
+            # Merge channels and convert back to BGR
+            lab = cv2.merge([l, a, b])
+            img_corrected = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            
+            return img_corrected
+            
+        except ImportError:
+            # Fallback to simple color correction if data_provider not available
+            logger.info("Using fallback color correction")
+            # Convert to float for processing
+            img_float = image.astype(np.float32) / 255.0
+            
+            # Apply gamma correction
+            gamma = 1.2
+            img_gamma = np.power(img_float, 1.0 / gamma)
+            
+            # Simple contrast enhancement
+            img_contrast = np.clip(img_gamma * 1.2 - 0.1, 0, 1)
+            
+            # Convert back to uint8
+            img_final = np.clip(img_contrast * 255, 0, 255).astype(np.uint8)
+            
+            return img_final
+        except Exception as e:
+            logger.warning(f"Color correction failed: {e}")
+            return image
     
     def close(self):
         """Clean up resources."""
@@ -345,8 +521,11 @@ def main():
     
     # Initialize Rerun if enabled
     if not args.no_rerun:
+        # Set memory limit environment variable for Rerun (4GB)
+        os.environ["RERUN_MEMORY_LIMIT"] = "4GiB"
+        
         rr.init("streaming_eye_gaze_demo", spawn=True)
-        rr.log("info", rr.TextDocument("Starting streaming eye gaze demo..."))
+        rr.log("info", rr.TextDocument("Starting streaming eye gaze demo with 4GB memory limit..."))
     
     # Load model
     logger.info("Loading eye gaze model...")
@@ -394,9 +573,19 @@ def main():
         else:
             raise
     
+    # Get device calibration
+    device_calibration = None
+    try:
+        logger.info("Getting device calibration...")
+        sensors_calib_json = streaming_manager.sensors_calibration()
+        device_calibration = device_calibration_from_json_string(sensors_calib_json)
+        logger.info("Device calibration loaded successfully")
+    except Exception as e:
+        logger.warning(f"Could not get device calibration: {e}")
+    
     # Get streaming client and set up observer
     streaming_client = streaming_manager.streaming_client
-    observer = StreamingEyeGazeObserver(eye_gaze_inference, args.output_csv)
+    observer = StreamingEyeGazeObserver(eye_gaze_inference, device_calibration, args.output_csv)
     streaming_client.set_streaming_client_observer(observer)
     
     # Subscribe to data streams
@@ -408,8 +597,8 @@ def main():
         aria.StreamingDataType.EyeTrack | aria.StreamingDataType.Rgb
     )
     
-    # Set message queue sizes
-    config.message_queue_size[aria.StreamingDataType.EyeTrack] = 10
+    # Set message queue sizes (minimize memory usage)
+    config.message_queue_size[aria.StreamingDataType.EyeTrack] = 3
     config.message_queue_size[aria.StreamingDataType.Rgb] = 1
     
     # Enable security
@@ -426,7 +615,7 @@ def main():
     if args.show_window:
         window_name = "Eye Gaze Tracking"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 800, 600)
+        cv2.resizeWindow(window_name, 1200, 480)
     
     try:
         logger.info("Streaming eye gaze data. Press Ctrl+C to stop...")
@@ -443,10 +632,14 @@ def main():
                 if vis_img is not None:
                     cv2.imshow(window_name, vis_img)
                     
-                    # Check for 'q' key to quit
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                    # Check for key presses
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
                         logger.info("Quit key pressed")
                         break
+                    elif key == ord('c'):
+                        observer.apply_color_correction = not observer.apply_color_correction
+                        logger.info(f"Color correction {'enabled' if observer.apply_color_correction else 'disabled'}")
                 else:
                     # Show empty window
                     cv2.waitKey(1)

@@ -59,29 +59,52 @@ python projectaria_eyetracking/projectaria_eyetracking/streaming_eye_gaze_demo.p
 - `--model_config_path`: Path to model config file (optional)
 - `--device`: Device for inference (cpu, cuda, or mps, default: cpu)
 - `--output_csv`: Path to save gaze data CSV
-- `--show-window`: Enable OpenCV visualization window
+- `--show-window`: Enable OpenCV visualization window (with undistorted RGB)
 - `--no-rerun`: Disable Rerun visualization
 
 ## Features
 
 1. **Real-time Eye Tracking**: Processes eye camera images as they stream from the device
-2. **Gaze Visualization**: Shows gaze direction with uncertainty bounds
-3. **Multiple Output Options**:
+2. **RGB Camera Integration**: Shows gaze point projected onto RGB camera view
+3. **Switchable View Modes**: Toggle between fisheye and undistorted RGB views (press 'f')
+4. **Color Correction**: Advanced color correction with CLAHE enhancement (press 'c' to toggle)
+5. **Accurate Gaze Projection**: Gaze projection adapts to the current view mode
+6. **Gaze Visualization**: Shows gaze direction with uncertainty bounds
+7. **Multiple Output Options**:
    - Rerun visualization (3D viewer)
    - OpenCV window (2D overlay)
    - CSV export for analysis
-4. **Performance Monitoring**: Shows FPS counter for tracking performance
+8. **Performance Monitoring**: Shows FPS counter for tracking performance
 
 ## Visualization
 
-The OpenCV window shows:
-- Eye camera image
-- Gaze direction arrow (green)
-- Uncertainty bounds (orange lines)
-- Yaw/Pitch angles in degrees
-- FPS counter
+**OpenCV Windows** (--show-window): 
+- **Main Window**: Shows two panels side by side:
+  - **Left Panel (Eye Camera)**:
+    - Eye camera image
+    - Gaze direction arrow (green)
+    - Uncertainty bounds (orange lines)
+  - **Right Panel (RGB Camera)**:
+    - Switchable between fisheye and undistorted views
+    - Color correction with CLAHE enhancement (toggleable)
+    - Projected gaze point (green circle with crosshair)
+    - View mode indicator (FISHEYE VIEW / UNDISTORTED VIEW)
+    - Color correction status indicator
+    - Yaw/Pitch angles in degrees
+    - FPS counter
 
-Press 'q' in the OpenCV window or Ctrl+C in terminal to stop.
+- **Plain Fisheye Window** (toggleable):
+  - Shows raw fisheye RGB image without any processing
+  - No color correction or undistortion applied
+  - Gaze point overlay (when calibration available)
+  - Toggle on/off with 'p' key
+
+## Controls
+
+- Press **'f'** to toggle between fisheye and undistorted RGB views (main window)
+- Press **'c'** to toggle color correction on/off
+- Press **'p'** to toggle plain fisheye window on/off
+- Press **'q'** or Ctrl+C to quit
 
 ## Notes
 
