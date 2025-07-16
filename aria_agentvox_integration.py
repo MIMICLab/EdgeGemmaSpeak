@@ -622,7 +622,7 @@ def main():
                     
                     # Generate response with the reloaded image and gaze coordinates
                     response = voice_assistant.llm.generate_response(enhanced_input, images=voice_assistant.image_buffer)
-                    
+                    response = response.replace("*", "").replace("--", "").strip()
                 else:
                     # No image or gaze data available, proceed with text only
                     if is_korean:
@@ -631,7 +631,7 @@ def main():
                         print("⚠️ No image or gaze data available, proceeding with text-only response.")
                     
                     response = voice_assistant.llm.generate_response(user_input)
-                
+                    response = response.replace("*", "").replace("--", "").strip()
                 print(f"\n어시스턴트: {response}" if is_korean else f"\nAssistant: {response}")
                 
                 # Clear images after use
