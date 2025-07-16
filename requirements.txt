@@ -12,3 +12,4 @@ hangul-romanize
 mecab-python3
 unidic-lite
 torch>=2.6.0
+spacy

@@ -469,7 +469,7 @@ def main():
         eye_gaze_inference = EyeGazeInference(
             args.eye_model_path,
             args.eye_config_path,
-            args.device if args.device != "auto" else "cpu"
+            "cpu"
         )
         
         # 3. Connect to Aria device
