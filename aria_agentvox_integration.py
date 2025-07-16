@@ -26,6 +26,10 @@ from pathlib import Path
 import sys
 import os
 
+# Reduce DDS warnings
+logging.getLogger('SubListener').setLevel(logging.ERROR)
+logging.getLogger('dds').setLevel(logging.ERROR)
+
 # Add paths for Project Aria modules
 sys.path.append(os.path.join(os.path.dirname(__file__), "projectaria/projectaria_eyetracking/projectaria_eyetracking"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "agentvox"))
@@ -75,6 +79,7 @@ class AriaAgentVoxBridge:
         self.audio_buffer = []
         self.audio_sample_rate = 48000  # Aria default audio sample rate
         self.audio_enabled = False  # Flag to enable/disable Aria audio
+        self.audio_max_buffer_size = self.audio_sample_rate * 5  # 5 seconds max buffer
         
         # Auto-capture settings
         self.auto_capture_enabled = False
@@ -165,10 +170,9 @@ class AriaAgentVoxBridge:
             with self.audio_lock:
                 self.audio_buffer.extend(audio_array.flatten())
                 
-                # Keep buffer size reasonable (e.g., last 10 seconds)
-                max_buffer_size = self.audio_sample_rate * 10
-                if len(self.audio_buffer) > max_buffer_size:
-                    self.audio_buffer = self.audio_buffer[-max_buffer_size:]
+                # Keep buffer size reasonable (5 seconds max)
+                if len(self.audio_buffer) > self.audio_max_buffer_size:
+                    self.audio_buffer = self.audio_buffer[-self.audio_max_buffer_size:]
                     
         except Exception as e:
             print(f"Error processing audio data: {e}")
@@ -516,7 +520,7 @@ def main():
         )
         config.message_queue_size[aria.StreamingDataType.EyeTrack] = 3
         config.message_queue_size[aria.StreamingDataType.Rgb] = 1
-        config.message_queue_size[aria.StreamingDataType.Audio] = 5
+        config.message_queue_size[aria.StreamingDataType.Audio] = 20  # Increase audio buffer
         
         # Enable security
         options = aria.StreamingSecurityOptions()
