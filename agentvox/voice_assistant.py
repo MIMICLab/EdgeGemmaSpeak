@@ -516,9 +516,6 @@ Response rules:
 5. Do not add unnecessary explanations or follow‑up questions.
 """
         
-        # Build prompt with full conversation history
-        print(f"DEBUG: System prompt length: {len(system_prompt)}")
-        print(f"DEBUG: System prompt preview: {system_prompt[:200]}...")
         conversation_text = ""
         
         # If first conversation
