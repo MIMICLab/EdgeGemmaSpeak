@@ -10,23 +10,9 @@ from pathlib import Path
 from .voice_assistant import ModelConfig, AudioConfig
 
 
-def download_model():
-    """Download the default Gemma model"""
-
-    
-    model_dir = Path.home() / ".agentvox" / "models"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    
-    model_filename = "gemma-3-12b-it-Q4_K_M.gguf"
-    model_path = model_dir / model_filename
-    
-    if model_path.exists():
-        print(f"✓ Model already exists at {model_path}")
-        return
-    
-    model_url = "https://huggingface.co/tgisaturday/Docsray/resolve/main/gemma-3-12b-it-GGUF/gemma-3-12b-it-Q4_K_M.gguf"
-    
-    print(f"Downloading Gemma model to {model_path}")
+def download_file(url, path, filename):
+    """Download a file with progress bar"""
+    print(f"Downloading {filename} to {path}")
     print("This may take a while depending on your internet connection...")
     print()
     
@@ -36,7 +22,7 @@ def download_model():
         result = subprocess.run(["which", "wget"], capture_output=True, text=True)
         if result.returncode == 0:
             # Use wget
-            cmd = ["wget", "-c", model_url, "-O", str(model_path)]
+            cmd = ["wget", "-c", url, "-O", str(path)]
             print(f"Using wget: {' '.join(cmd)}")
             subprocess.run(cmd, check=True)
         else:
@@ -44,42 +30,88 @@ def download_model():
             result = subprocess.run(["which", "curl"], capture_output=True, text=True)
             if result.returncode == 0:
                 # Use curl
-                cmd = ["curl", "-L", "-C", "-", model_url, "-o", str(model_path)]
+                cmd = ["curl", "-L", "-C", "-", url, "-o", str(path)]
                 print(f"Using curl: {' '.join(cmd)}")
                 subprocess.run(cmd, check=True)
             else:
                 # Fallback to Python urllib
                 print("Neither wget nor curl found. Using Python to download...")
                 import urllib.request
-                from tqdm import tqdm
-                
-                def download_with_progress(url, path):
-                    with urllib.request.urlopen(url) as response:
-                        total_size = int(response.headers.get('Content-Length', 0))
-                        
-                        with open(path, 'wb') as f:
-                            with tqdm(total=total_size, unit='iB', unit_scale=True) as pbar:
-                                while True:
-                                    chunk = response.read(8192)
-                                    if not chunk:
-                                        break
-                                    f.write(chunk)
-                                    pbar.update(len(chunk))
-                
-                download_with_progress(model_url, model_path)
+                try:
+                    from tqdm import tqdm
+                    
+                    def download_with_progress(url, path):
+                        with urllib.request.urlopen(url) as response:
+                            total_size = int(response.headers.get('Content-Length', 0))
+                            
+                            with open(path, 'wb') as f:
+                                with tqdm(total=total_size, unit='iB', unit_scale=True) as pbar:
+                                    while True:
+                                        chunk = response.read(8192)
+                                        if not chunk:
+                                            break
+                                        f.write(chunk)
+                                        pbar.update(len(chunk))
+                    
+                    download_with_progress(url, path)
+                except ImportError:
+                    # Fallback without progress bar
+                    print("tqdm not available, downloading without progress bar...")
+                    urllib.request.urlretrieve(url, path)
         
-        print(f"\n✓ Model downloaded successfully to {model_path}")
+        print(f"\n✓ {filename} downloaded successfully to {path}")
         
     except subprocess.CalledProcessError as e:
         print(f"\n✗ Download failed with error: {e}")
-        if model_path.exists():
-            os.remove(model_path)
-        sys.exit(1)
+        if path.exists():
+            os.remove(path)
+        raise
     except Exception as e:
         print(f"\n✗ Download failed with error: {e}")
-        if model_path.exists():
-            os.remove(model_path)
-        sys.exit(1)
+        if path.exists():
+            os.remove(path)
+        raise
+
+def download_model(include_mmproj=False):
+    """Download the default Gemma model and optionally the mmproj model"""
+    
+    model_dir = Path.home() / ".agentvox" / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Main model
+    model_filename = "gemma-3-12b-it-Q4_K_M.gguf"
+    model_path = model_dir / model_filename
+    model_url = "https://huggingface.co/tgisaturday/Docsray/resolve/main/gemma-3-12b-it-GGUF/gemma-3-12b-it-Q4_K_M.gguf"
+    
+    # Download main model if it doesn't exist
+    if model_path.exists():
+        print(f"✓ Main model already exists at {model_path}")
+    else:
+        try:
+            download_file(model_url, model_path, "Gemma model")
+        except Exception:
+            sys.exit(1)
+    
+    # Multimodal projection model
+    if include_mmproj:
+        mmproj_filename = "mmproj-gemma-3-12b-it-F16.gguf"
+        mmproj_path = model_dir / mmproj_filename
+        mmproj_url = "https://huggingface.co/tgisaturday/Docsray/resolve/main/gemma-3-12b-it-GGUF/mmproj-gemma-3-12b-it-F16.gguf"
+        
+        if mmproj_path.exists():
+            print(f"✓ Multimodal projection model already exists at {mmproj_path}")
+        else:
+            try:
+                download_file(mmproj_url, mmproj_path, "Multimodal projection model")
+            except Exception:
+                sys.exit(1)
+    
+    print("\n🎉 All models downloaded successfully!")
+    if include_mmproj:
+        print("You can now use AgentVox with vision capabilities!")
+    else:
+        print("You can now use AgentVox with text-only capabilities!")
+        print("To enable vision capabilities, run: agentvox --download-model --multimodal")
     
 
 def main():
@@ -107,6 +139,10 @@ def main():
                        help="Speaker voice sample file for voice cloning (Coqui only)")
     parser.add_argument("--download-model", action="store_true",
                        help="Download the default Gemma model")
+    parser.add_argument("--multimodal", action="store_true",
+                       help="Enable multimodal (vision) support")
+    parser.add_argument("--mmproj-model", type=str, default=None,
+                       help="Path to multimodal projection model file")
     parser.add_argument("--list-voices", action="store_true",
                        help="[Deprecated] List voices - not supported with Coqui engine")
     parser.add_argument("--list-tts-models", action="store_true",
@@ -139,13 +175,13 @@ def main():
                        help="LLM temperature for sampling (default: 0.7)")
     parser.add_argument("--llm-top-p", type=float, default=0.95,
                        help="LLM top-p for nucleus sampling (default: 0.95)")
-    parser.add_argument("--llm-context-size", type=int, default=4096,
+    parser.add_argument("--llm-context-size", type=int, default=2048,
                        help="LLM context window size (default: 4096)")
     
     args = parser.parse_args()
     
     if args.download_model:
-        download_model()
+        download_model(include_mmproj=args.multimodal)
         sys.exit(0)
     
     if args.list_tts_models:
@@ -197,6 +233,8 @@ def main():
     model_config = ModelConfig(
         stt_model=args.stt_model,
         llm_model=args.model,
+        mmproj_model=args.mmproj_model,
+        is_multimodal=args.multimodal,
         device=device,
         # STT parameters
         stt_language=stt_language,

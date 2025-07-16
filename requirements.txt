@@ -1,7 +1,7 @@
 realtimestt
 realtimetts[coqui]
 numpy
-llama-cpp-python
+llama-cpp-python==0.3.9
 pygame
 sounddevice
 soundfile
