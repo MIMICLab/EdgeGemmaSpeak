@@ -35,29 +35,27 @@ logging.getLogger().setLevel(logging.ERROR)
 import warnings
 warnings.filterwarnings("ignore", message=".*sample lost.*")
 warnings.filterwarnings("ignore", message=".*CRITICAL DDS.*")
+warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 
 # Add paths for Project Aria modules
-sys.path.append(os.path.join(os.path.dirname(__file__), "projectaria/projectaria_eyetracking/projectaria_eyetracking"))
-sys.path.append(os.path.join(os.path.dirname(__file__), "agentvox"))
+base_dir = os.path.dirname(__file__)
+sys.path.extend([
+    os.path.join(base_dir, "projectaria/projectaria_eyetracking/projectaria_eyetracking"),
+    os.path.join(base_dir, "agentvox"),
+    os.path.join(base_dir, "projectaria/projectaria_client_sdk_samples")
+])
 
 # Project Aria imports
 import aria.sdk as aria
 from projectaria_tools.core.sensor_data import ImageDataRecord
 from projectaria_tools.core.calibration import device_calibration_from_json_string
+from common import update_iptables
 
 # AgentVox imports
 from agentvox.voice_assistant import VoiceAssistant, ModelConfig, AudioConfig
 
 # Eye tracking import
-try:
-    from inference.infer import EyeGazeInference
-except ImportError:
-    sys.path.append(os.path.join(os.path.dirname(__file__), "projectaria/projectaria_eyetracking/projectaria_eyetracking"))
-    from inference.infer import EyeGazeInference
-
-# Import common utility
-sys.path.append(os.path.join(os.path.dirname(__file__), "projectaria/projectaria_client_sdk_samples"))
-from common import update_iptables
+from inference.infer import EyeGazeInference
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +64,11 @@ class AriaAgentVoxBridge:
     """Bridge class to connect Aria eye tracking with AgentVox"""
     
     def __init__(self, voice_assistant: VoiceAssistant, eye_gaze_inference: EyeGazeInference, 
-                 device_calibration=None):
+                 device_calibration=None, resize=896):
         self.voice_assistant = voice_assistant
         self.eye_gaze_inference = eye_gaze_inference
         self.device_calibration = device_calibration
+        self.resize = resize
         
         # Latest data
         self.latest_rgb_image = None
@@ -87,14 +86,29 @@ class AriaAgentVoxBridge:
         self.audio_enabled = False  # Flag to enable/disable Aria audio
         self.audio_max_buffer_size = self.audio_sample_rate * 5  # 5 seconds max buffer
         
-        # Auto-capture settings
-        self.auto_capture_enabled = False
-        self.capture_interval = 3.0  # seconds
-        self.last_capture_time = 0
-        
         # Performance tracking
         self.frame_count = 0
         self.last_fps_time = time.time()
+        
+        # Language check
+        self.is_korean = voice_assistant.model_config.stt_language.startswith('ko')
+    
+    def print_bilingual(self, kr_msg: str, en_msg: str):
+        """Print message in appropriate language"""
+        print(kr_msg if self.is_korean else en_msg)
+    
+    def clean_response(self, response: str) -> str:
+        """Clean response by removing markdown formatting"""
+        return response.replace("*", "").replace("--", "").strip()
+    
+    def _convert_to_pil_image(self, cv_image: np.array) -> Image.Image:
+        """Convert OpenCV image to PIL Image, handling color format"""
+        try:
+            # Try direct conversion first (Aria might already be RGB)
+            return Image.fromarray(cv_image)
+        except:
+            # Fallback to BGR2RGB conversion
+            return Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
         
     def on_image_received(self, image: np.array, record: ImageDataRecord):
         """Handle incoming images from Aria device"""
@@ -107,19 +121,7 @@ class AriaAgentVoxBridge:
             
             with self.image_lock:
                 # Convert to PIL Image for AgentVox
-                # Try direct conversion first (Aria might already be RGB)
-                try:
-                    self.latest_rgb_image = Image.fromarray(rotated_image)
-                except:
-                    # Fallback to BGR2RGB conversion
-                    self.latest_rgb_image = Image.fromarray(cv2.cvtColor(rotated_image, cv2.COLOR_BGR2RGB))
-                
-            # Auto-capture logic
-            if self.auto_capture_enabled:
-                current_time = time.time()
-                if current_time - self.last_capture_time > self.capture_interval:
-                    self.capture_current_view()
-                    self.last_capture_time = current_time
+                self.latest_rgb_image = self._convert_to_pil_image(rotated_image)
                     
         elif camera_id == aria.CameraId.EyeTrack:
             # Process eye tracking image
@@ -207,12 +209,12 @@ class AriaAgentVoxBridge:
     def capture_current_view(self):
         """Capture current RGB view and add to AgentVox"""
         with self.image_lock:
-            if self.latest_rgb_image:
+            if self.latest_rgb_image is not None:
                 self.voice_assistant.add_image(self.latest_rgb_image.copy())
                 print("📸 Current view captured and added to voice assistant!")
     
     def project_gaze_to_image(self, image_width: int, image_height: int) -> tuple:
-        """Project gaze angles to image coordinates"""
+        """Project gaze angles to image coordinates - simplified approach from streaming_eye_gaze_demo.py"""
         with self.gaze_lock:
             if not self.latest_gaze_data:
                 return None, None
@@ -220,26 +222,68 @@ class AriaAgentVoxBridge:
             yaw_deg = self.latest_gaze_data["yaw_deg"]
             pitch_deg = self.latest_gaze_data["pitch_deg"]
             
-            # Simple projection assuming FOV of ~90 degrees
+            # Use the simple projection from streaming_eye_gaze_demo.py
             # Map gaze angles to image coordinates
-            # Center of image is (0, 0) in gaze coordinates
-            center_x = image_width / 2
-            center_y = image_height / 2
+            # Assuming field of view ~90 degrees (divide by 45)
             
-            # Scale factor for mapping degrees to pixels
-            # Assuming FOV of 90 degrees maps to image width/height
-            scale_x = image_width / 90.0
-            scale_y = image_height / 90.0
+            # The image has been rotated 90° clockwise, need another 90° = 180° total
+            # After 180° rotation, everything is inverted:
+            # - Yaw: inverted (positive becomes negative)
+            # - Pitch: inverted (positive becomes negative)
             
-            # Calculate gaze point in image coordinates
-            gaze_x = center_x + (yaw_deg * scale_x)
-            gaze_y = center_y + (pitch_deg * scale_y)
+            # After 180° rotation:
+            gaze_x = int(image_width/2 - (yaw_deg / 45.0) * image_width/2)    # yaw inverted
+            gaze_y = int(image_height/2 - (pitch_deg / 45.0) * image_height/2)  # pitch inverted
             
             # Clamp to image bounds
-            gaze_x = max(0, min(image_width - 1, gaze_x))
-            gaze_y = max(0, min(image_height - 1, gaze_y))
+            gaze_x = max(0, min(image_width - 1, int(gaze_x)))
+            gaze_y = max(0, min(image_height - 1, int(gaze_y)))
             
             return int(gaze_x), int(gaze_y)
+    
+    def get_gaze_or_center(self, width: int, height: int) -> tuple:
+        """Get gaze coordinates or center if not available"""
+        gaze_x, gaze_y = self.project_gaze_to_image(width, height)
+        if gaze_x is None or gaze_y is None:
+            return width // 2, height // 2
+        return gaze_x, gaze_y
+    
+    def resize_image_with_gaze(self, image: Image.Image, size: int = None) -> Image.Image:
+        """Resize image and add gaze point marker"""
+        if size is None:
+            size = self.resize
+        if not image:
+            return None
+            
+        # First add gaze point to the image
+        image_with_gaze = self.add_gaze_overlay(image)
+        
+        # Then resize the image
+        if image_with_gaze.size[0] != size or image_with_gaze.size[1] != size:
+            # Keep aspect ratio
+            image_with_gaze.thumbnail((size, size), Image.Resampling.LANCZOS)
+            
+        return image_with_gaze
+    
+    def add_gaze_overlay(self, image: Image.Image) -> Image.Image:
+        """Add green dot at gaze point on image"""
+        if not image:
+            return None
+            
+        # Convert PIL to OpenCV format
+        cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        height, width = cv_image.shape[:2]
+        
+        # Get gaze point coordinates
+        gaze_x, gaze_y = self.project_gaze_to_image(width, height)
+        
+        if gaze_x is not None and gaze_y is not None:
+            # Draw large green dot at gaze point
+            cv2.circle(cv_image, (gaze_x, gaze_y), 20, (0, 255, 0), -1)  # Large filled green circle
+            cv2.circle(cv_image, (gaze_x, gaze_y), 25, (0, 255, 0), 3)   # Outer ring for visibility
+        
+        # Convert back to PIL
+        return Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     
     def add_gaze_point_to_image(self, image: Image.Image) -> tuple:
         """Add gaze point to image and return image with relative coordinates"""
@@ -285,6 +329,43 @@ class AriaAgentVoxBridge:
             
             return annotated_image, rel_x, rel_y
     
+    def get_full_image_with_gaze_overlay(self) -> Image.Image:
+        """Get full RGB image with large green dot at gaze point for debug"""
+        with self.image_lock:
+            if not self.latest_rgb_image:
+                return None
+            
+            # Convert PIL to OpenCV format
+            cv_image = cv2.cvtColor(np.array(self.latest_rgb_image), cv2.COLOR_RGB2BGR)
+            height, width = cv_image.shape[:2]
+            
+            # Get gaze point coordinates
+            gaze_x, gaze_y = self.project_gaze_to_image(width, height)
+            
+            if gaze_x is not None and gaze_y is not None:
+                # Draw large green dot at gaze point
+                cv2.circle(cv_image, (gaze_x, gaze_y), 20, (0, 255, 0), -1)  # Large filled green circle
+                cv2.circle(cv_image, (gaze_x, gaze_y), 25, (0, 255, 0), 3)   # Outer ring for visibility
+                
+                # Add text showing gaze coordinates
+                text = f"Gaze: ({gaze_x}, {gaze_y})"
+                cv2.putText(cv_image, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            else:
+                # No gaze data - add warning text
+                cv2.putText(cv_image, "No gaze data", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            
+            # Convert back to PIL
+            return Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
+    
+    def get_current_resized_view(self) -> Image.Image:
+        """Get current RGB image resized with gaze overlay"""
+        with self.image_lock:
+            if not self.latest_rgb_image:
+                return None
+            
+            # Resize image with gaze overlay
+            return self.resize_image_with_gaze(self.latest_rgb_image.copy())
+    
     def get_gaze_description(self) -> str:
         """Get a description of current gaze direction"""
         with self.gaze_lock:
@@ -309,29 +390,17 @@ class AriaAgentVoxBridge:
             
             return f"Looking {v_direction}-{h_direction} (yaw: {yaw:.1f}°, pitch: {pitch:.1f}°)"
     
-    def enable_auto_capture(self, interval: float = 3.0):
-        """Enable automatic image capture"""
-        self.auto_capture_enabled = True
-        self.capture_interval = interval
-        print(f"🔄 Auto-capture enabled (every {interval}s)")
-    
-    def disable_auto_capture(self):
-        """Disable automatic image capture"""
-        self.auto_capture_enabled = False
-        print("⏹️ Auto-capture disabled")
-    
     def get_status(self) -> str:
         """Get current status"""
         with self.image_lock:
-            rgb_status = "✓" if self.latest_rgb_image else "✗"
-            eye_status = "✓" if self.latest_eye_image else "✗"
+            rgb_status = "✓" if self.latest_rgb_image is not None else "✗"
+            eye_status = "✓" if self.latest_eye_image is not None else "✗"
         
         with self.gaze_lock:
             gaze_status = "✓" if self.latest_gaze_data else "✗"
         
-        auto_status = "ON" if self.auto_capture_enabled else "OFF"
-        
-        return f"RGB: {rgb_status} | Eye: {eye_status} | Gaze: {gaze_status} | Auto-capture: {auto_status}"
+        return f"RGB: {rgb_status} | Eye: {eye_status} | Gaze: {gaze_status}"
+
 
 
 def create_parser():
@@ -374,6 +443,14 @@ def create_parser():
         help="Path to eye tracking model config"
     )
     
+    # Image processing parameters
+    parser.add_argument(
+        "--resize",
+        type=int,
+        default=896,
+        help="Size to resize image (default: 896)"
+    )
+    
     # AgentVox parameters
     parser.add_argument(
         "--llm-model",
@@ -408,17 +485,6 @@ def create_parser():
     
     # Integration parameters
     parser.add_argument(
-        "--auto-capture",
-        action="store_true",
-        help="Enable automatic image capture"
-    )
-    parser.add_argument(
-        "--capture-interval",
-        type=float,
-        default=3.0,
-        help="Auto-capture interval in seconds (default: 3.0)"
-    )
-    parser.add_argument(
         "--update-iptables",
         action="store_true",
         help="Update iptables for streaming (Linux only)"
@@ -427,6 +493,11 @@ def create_parser():
         "--use-aria-mic",
         action="store_true",
         help="Use Aria microphone instead of computer microphone (experimental)"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode - save captured images with gaze overlay"
     )
     
     return parser
@@ -514,7 +585,7 @@ def main():
             print(f"⚠️ Could not load device calibration: {e}")
         
         # 5. Create bridge and set up observer
-        bridge = AriaAgentVoxBridge(voice_assistant, eye_gaze_inference, device_calibration)
+        bridge = AriaAgentVoxBridge(voice_assistant, eye_gaze_inference, device_calibration, resize=args.resize)
         
         streaming_client = streaming_manager.streaming_client
         streaming_client.set_streaming_client_observer(bridge)
@@ -541,10 +612,6 @@ def main():
         streaming_manager.start_streaming()
         streaming_client.subscribe()
         
-        # Enable auto-capture if requested
-        if args.auto_capture:
-            bridge.enable_auto_capture(args.capture_interval)
-        
         # Enable Aria audio if requested
         if args.use_aria_mic:
             print("🎤 Enabling Aria microphone...")
@@ -570,12 +637,50 @@ def main():
         print("  - '이 화면에서 중요한 부분은?' (What's important in this screen?)")
         print("=" * 50)
         
+        # Create debug directory if debug mode is enabled
+        debug_dir = None
+        if args.debug:
+            debug_dir = Path("aria_debug_captures")
+            debug_dir.mkdir(exist_ok=True)
+            print(f"📁 Debug mode enabled - saving captures to: {debug_dir}")
+        
         # 7. Enhanced conversation loop with Aria integration
         def enhanced_conversation_loop():
             """Enhanced conversation loop with Aria integration"""
             is_korean = voice_assistant.model_config.stt_language.startswith('ko')
             
+            # Variable to store captured image
+            captured_image = None
+            capture_count = 0
+            
+            # Callback for when recording starts
+            def on_recording_start():
+                nonlocal captured_image, capture_count
+                bridge.print_bilingual("🎤 녹음 시작 - 시선 위치 캡처 중...", "🎤 Recording started - capturing gaze position...")
+                # Capture resized image WITH green dot for AI
+                captured_image = bridge.get_current_resized_view()
+                
+                if args.debug and captured_image:
+                    # Save debug image
+                    capture_count += 1
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    
+                    # Save resized image with gaze
+                    filename = debug_dir / f"capture_{capture_count:04d}_{timestamp}.png"
+                    captured_image.save(filename)
+                    print(f"💾 Debug: Saved capture to {filename}")
+                
+                if captured_image:
+                    bridge.print_bilingual(f"📷 {bridge.resize}x{bridge.resize} 이미지 캡처 완료 (시선 표시 포함)", 
+                                         f"📷 Captured {bridge.resize}x{bridge.resize} image (with gaze marker)")
+            
+            # Set the callback
+            voice_assistant.stt.recorder.on_recording_start = on_recording_start
+            
             while True:
+                # Reset captured image
+                captured_image = None
+                
                 # Listen to user
                 user_input = voice_assistant.stt.transcribe_once()
                 
@@ -586,10 +691,7 @@ def main():
                 
                 # Check for special commands
                 if "exit" in user_lower or "종료" in user_input:
-                    if is_korean:
-                        print("\n대화를 종료합니다.")
-                    else:
-                        print("\nEnding conversation.")
+                    bridge.print_bilingual("\n대화를 종료합니다.", "\nEnding conversation.")
                     break
                 elif "status" in user_lower or "상태" in user_input:
                     status = bridge.get_status()
@@ -599,40 +701,37 @@ def main():
                     voice_assistant.clear_images()
                     continue
                 
-                # 새로운 동작방식: STT 입력이 있을 때마다 현재 뷰 + gaze point 자동 캡처
-                print("👁️ 현재 시선 위치의 이미지를 캡처하는 중..." if is_korean else "👁️ Capturing current view with gaze point...")
-                
-                # Get current RGB image with gaze point overlay
-                annotated_image, rel_x, rel_y = bridge.get_current_view_with_gaze()
+                # Use the image captured when recording started
+                cropped_image = captured_image
                 
                 # Clear previous images
                 voice_assistant.clear_images()
                 
-                if annotated_image and rel_x is not None and rel_y is not None:
-                    # Add image directly to voice assistant
-                    voice_assistant.add_image(annotated_image)
+                if cropped_image:
+                    # Add cropped image to voice assistant
+                    voice_assistant.add_image(cropped_image)
                     
                     # Use original input without coordinates
                     enhanced_input = user_input
                     
-                    if is_korean:
-                        print(f"📷 파일에서 불러온 시선 이미지 (x={rel_x:.3f}, y={rel_y:.3f})로 응답 생성 중...")
-                    else:
-                        print(f"📷 Generating response with gaze image loaded from file (x={rel_x:.3f}, y={rel_y:.3f})...")
+                    bridge.print_bilingual(
+                        f"📷 시선 표시가 포함된 {bridge.resize}x{bridge.resize} 이미지로 응답 생성 중...",
+                        f"📷 Generating response with {bridge.resize}x{bridge.resize} image with gaze marker..."
+                    )
                     
                     # Generate response with the reloaded image and gaze coordinates
                     response = voice_assistant.llm.generate_response(enhanced_input, images=voice_assistant.image_buffer)
-                    response = response.replace("*", "").replace("--", "").strip()
+                    response = bridge.clean_response(response)
                 else:
                     # No image or gaze data available, proceed with text only
-                    if is_korean:
-                        print("⚠️ 이미지나 시선 데이터가 없어 텍스트만으로 응답합니다.")
-                    else:
-                        print("⚠️ No image or gaze data available, proceeding with text-only response.")
+                    bridge.print_bilingual(
+                        "⚠️ 이미지나 시선 데이터가 없어 텍스트만으로 응답합니다.",
+                        "⚠️ No image or gaze data available, proceeding with text-only response."
+                    )
                     
                     response = voice_assistant.llm.generate_response(user_input)
-                    response = response.replace("*", "").replace("--", "").strip()
-                print(f"\n어시스턴트: {response}" if is_korean else f"\nAssistant: {response}")
+                    response = bridge.clean_response(response)
+                bridge.print_bilingual(f"\n어시스턴트: {response}", f"\nAssistant: {response}")
                 
                 # Clear images after use
                 voice_assistant.clear_images()

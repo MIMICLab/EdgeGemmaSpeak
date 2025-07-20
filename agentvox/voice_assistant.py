@@ -362,88 +362,44 @@ class LLMModule:
                 )
                 self.tokenizer = LlamaTokenizer(self.model)
         
-        # Manage conversation history
-        self.conversation_history = []
-        
     def generate_response(self, text: str, images: Optional[List[Image.Image]] = None, max_length: int = 512) -> str:
         """Generate response for input text, optionally with images for multimodal models"""
         # Check if using Korean voice
         is_korean = self.config.stt_language.startswith('ko')
-        
-        # Build conversation context
-        if is_korean:
-            self.conversation_history.append(f"사용자: {text}")
-        else:
-            self.conversation_history.append(f"User: {text}")
-        
+
         # Handle multimodal input
-        if images is not None and self.is_multimodal:
-            try:
-                prompt = self._build_prompt()
-                # Merge images into a grid
-                image = images[-1]
-                # Convert image to data URI
-                image_uri = image_to_base64_data_uri(image, format="JPEG", quality=90)
-                
-                # Use chat completion API for multimodal input
-                messages = [
-                    {
-                        "role": "system",
-                        "content": self._build_prompt()},
-                    {
-                        "role": "user",
-                        "content": [
-                            {'type': 'text', 'text': text},
-                            {'type': 'image_url', 'image_url': {'url': image_uri}}
-                        ]
-                    }
-                ]
-                
-                response = self.model.create_chat_completion(
-                    messages=messages,
-                    stop=['<end_of_turn>', '<eos>'],
-                    max_tokens=max_length if max_length != 512 else self.config.llm_max_tokens,  # Reduce for multimodal
-                    temperature=self.config.llm_temperature,
-                    top_p=self.config.llm_top_p,
-                    repeat_penalty=self.config.llm_repeat_penalty
-                )
-                response_text = response['choices'][0]['message']['content'].strip()
-            except Exception as e:
-                # Fallback to text-only if multimodal fails
-                is_korean = self.config.stt_language.startswith('ko')
-                if is_korean:
-                    print(f"⚠️ 멀티모달 처리 실패, 텍스트만 처리합니다: {e}")
-                else:
-                    print(f"⚠️ Multimodal processing failed, falling back to text-only: {e}")
-                
-                # Process as text-only
-                prompt = self._build_prompt()
-                answer = self.model(
-                    prompt,
-                    stop=['<end_of_turn>', '<eos>'],
-                    max_tokens=max_length if max_length != 512 else self.config.llm_max_tokens,
-                    echo=False,
-                    temperature=self.config.llm_temperature,
-                    top_p=self.config.llm_top_p,
-                    repeat_penalty=self.config.llm_repeat_penalty,
-                )
-                response_text = answer['choices'][0]['text'].strip()
-        else:
-            # Text-only generation
+        try:
             prompt = self._build_prompt()
+            # Merge images into a grid
+            image = images[-1]
+            # Convert image to data URI
+            image_uri = image_to_base64_data_uri(image, format="JPEG", quality=90)
             
-            # Generate response
-            answer = self.model(
-                prompt,
+            # Use chat completion API for multimodal input
+            messages = [
+                {
+                    "role": "system",
+                    "content": prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {'type': 'text', 'text': text},
+                        {'type': 'image_url', 'image_url': {'url': image_uri}}
+                    ]
+                }
+            ]
+            response = self.model.create_chat_completion(
+                messages=messages,
                 stop=['<end_of_turn>', '<eos>'],
-                max_tokens=max_length if max_length != 512 else self.config.llm_max_tokens,
-                echo=False,
+                max_tokens=512,  # Reduce for multimodal
                 temperature=self.config.llm_temperature,
                 top_p=self.config.llm_top_p,
-                repeat_penalty=self.config.llm_repeat_penalty,
+                repeat_penalty=self.config.llm_repeat_penalty
             )
-            
-            response_text = answer['choices'][0]['text'].strip()
+            response_text = response['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(e)
+
         
         response = response_text
         
@@ -463,16 +419,6 @@ class LLMModule:
             else:
                 response = "I'm sorry. Could you please say that again?"
         
-        # Add to conversation history
-        if is_korean:
-            self.conversation_history.append(f"어시스턴트: {response}")
-        else:
-            self.conversation_history.append(f"Assistant: {response}")
-        
-        # Remove old history if too long (keep 20 turns)
-        if len(self.conversation_history) > 20:
-            self.conversation_history = self.conversation_history[-20:]
-            
         return response
     
     def _build_prompt(self) -> str:
@@ -483,63 +429,44 @@ class LLMModule:
         # System prompt
         if is_korean:
             system_prompt = """
-당신은 서강대학교 미믹랩에서 개발한 시각 어시스턴트입니다.
+당신은 서강대학교 미믹랩에서 개발한 에이아이 어시스턴트입니다.
+
+응답 규칙:
+1. 별표(*), 하이픈(-), 콜론(:) 등의 특수문자를 답변에 사용하지 않습니다.
+2. 리스트나 강조 없이 평서문만 사용합니다.
+3. 추측이나 배경 설명 없이, 눈에 보이는 사실만 1인칭 시점으로 묘사합니다.
+4. 불필요한 설명이나 추가 질문을 하지 않습니다.
+5. 영어 단어는 한글 음차 표기로 적습니다. 예) AI → 에이아이.
 
 시각 정보 처리:
 • 입력 장면은 사용자가 실제로 보고 있는 1인칭 시야입니다.
-• 초록색 점은 사용자의 주시 지점을 나타냅니다.
-• 당신은 사용자의 시선과 동일한 관점에서 현재 장면을 묘사해야 합니다. 예) 앞에 노트북이 보이네요. 오른쪽에 책이 있습니다.
+• 이미지에 있는 초록색 원은 사용자가 정확히 응시하고 있는 지점입니다.
+• 초록색 원 위치와 주변 내용을 중심으로 사용자의 질문에 답변하세요.
 
-응답 규칙:
-1. 입력 장면을 ‘사진’, ‘이미지’, ‘화면’, ‘촬영’, ‘찍힌’, ‘이미지 분석 결과’ 등으로 절대 지칭하지 않습니다.
-2. 별표(*), 하이픈(-), 콜론(:) 등의 특수문자를 답변에 사용하지 않습니다.
-3. 리스트나 강조 없이 평서문만 사용합니다.
-4. 추측이나 배경 설명 없이, 눈에 보이는 사실만 1인칭 시점으로 묘사합니다.
-5. 불필요한 설명이나 추가 질문을 하지 않습니다.
-6. 영어 단어는 한글 음차 표기로 적습니다. 예) AI → 에이아이.
+이어지는 사용자의 질문에 답변하세요.
+
 """
 
         else:
             system_prompt = """
-You are a visual assistant developed by MimicLab at Sogang University.
+You are a AI assistant developed by MimicLab at Sogang University.
+
+Response rules:
+1. Do not use symbols such as asterisks, hyphens, or colons in your replies.
+2. Write plain sentences only; no lists or formatting.
+3. State only what is visually apparent without speculation or extra background.
+4. Do not add unnecessary explanations or follow‑up questions.
 
 Visual information processing:
 • The input view is the user's live first‑person perspective.
-• The green dot marks the user's focal point.
-• Describe what you and the user see from a shared first‑person viewpoint. Example: I can see a laptop in front of us. There is a book on our right.
+• The green circle in the image marks the exact point where the user is looking.
+• Focus your answers on the content at and around the green circle.
 
-Response rules:
-1. Never refer to the view as photo, image, picture, screen, captured, taken, or say phrases like “image analysis shows”.
-2. Do not use symbols such as asterisks, hyphens, or colons in your replies.
-3. Write plain sentences only; no lists or formatting.
-4. State only what is visually apparent without speculation or extra background.
-5. Do not add unnecessary explanations or follow‑up questions.
+answer the user's question based on the following input.
+
 """
-        
-        conversation_text = ""
-        
-        # If first conversation
-        if len(self.conversation_history) == 1:
-            conversation_text = f"<start_of_turn>user\n{system_prompt}\n\n{self.conversation_history[0]}\n<end_of_turn>\n<start_of_turn>model\n"
-        else:
-            # Include system prompt
-            conversation_text = f"<start_of_turn>user\n{system_prompt}\n<end_of_turn>\n"
-            
-            # Include previous conversation history
-            for turn in self.conversation_history:
-                if turn.startswith("User:") or turn.startswith("사용자:"):
-                    conversation_text += f"<start_of_turn>user\n{turn}\n<end_of_turn>\n"
-                elif turn.startswith("Assistant:") or turn.startswith("어시스턴트:"):
-                    conversation_text += f"<start_of_turn>model\n{turn}\n<end_of_turn>\n"
-            
-            # End with model turn
-            conversation_text += "<start_of_turn>model\n"
-        
-        return conversation_text
-
-    def reset_conversation(self):
-        """Reset conversation history"""
-        self.conversation_history = []
+        return system_prompt.strip()
+    
 
 class TTSModule:
     """TTS module using RealtimeTTS with CoquiEngine"""
