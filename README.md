@@ -21,6 +21,15 @@ Edge-based voice assistant using Gemma LLM with real-time Speech-to-Text and Tex
 - **Complete Offline Operation**: All processing is done locally, ensuring privacy
 - **Voice Cloning**: Clone any voice with a short audio sample
 
+## 🤝 Collaboration with STOIC Entertainment
+
+**AgentVox** is proud to be developed in collaboration with **STOIC Entertainment**, a pioneering tech company specializing in AI and XR cross-platform solutions. This partnership integrates STOIC's expertise in creating immersive, interactive experiences with AgentVox's advanced voice technology.
+
+STOIC's key contributions include:
+- **Advanced Dialogue Management**: Leveraging their patented **Query Doc** technology, which enhances the AI's ability to have context-aware conversations by using an efficient, on-device RAG (Retrieval-Augmented Generation) system. This allows for more natural, memory-driven interactions, making the AI feel more like a personal companion that remembers past conversations.
+- **Cross-Platform XR Integration**: STOIC's extensive experience in developing content for Mobile, PC, and XR platforms ensures that AgentVox can be seamlessly integrated into various immersive environments, including upcoming AR glasses from major tech companies.
+- **AI-Powered Content**: Insights from STOIC's work on projects like the AI language learning platform **Fluent** help shape the conversational agent's ability to engage users in meaningful, goal-oriented dialogue.
+
 ## Installation
 
 ### 1. Install via pip
@@ -338,7 +347,7 @@ wget https://huggingface.co/tgisaturday/Docsray/resolve/main/gemma-3-12b-it-GGUF
 
 ## Developer Information
 
-Developed by MimicLab at Sogang University
+Developed by MimicLab at Sogang University and STOIC Entertainment, a leader in XR and AI-driven interactive content.
 
 ## License
 
