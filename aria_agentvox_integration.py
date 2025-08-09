@@ -524,9 +524,7 @@ def main():
         print("📢 Initializing AgentVox with multimodal support...")
         
         model_config = ModelConfig(
-            llm_model=args.llm_model,
-            mmproj_model=args.mmproj_model,
-            is_multimodal=True,  # Enable multimodal support
+            gemini_model="models/gemini-2.5-flash-lite",  # Use Gemini model
             device=args.device,
             stt_language=args.language,
             speaker_wav=args.speaker_wav
@@ -720,7 +718,11 @@ def main():
                     )
                     
                     # Generate response with the reloaded image and gaze coordinates
-                    response = voice_assistant.llm.generate_response(enhanced_input, images=voice_assistant.image_buffer)
+                    # Use the correct parameters for GeminiLLMModule.generate_response
+                    response = voice_assistant.llm.generate_response(
+                        text=enhanced_input,
+                        final_image=cropped_image  # Pass the image with gaze marker
+                    )
                     response = bridge.clean_response(response)
                 else:
                     # No image or gaze data available, proceed with text only
@@ -729,7 +731,9 @@ def main():
                         "⚠️ No image or gaze data available, proceeding with text-only response."
                     )
                     
-                    response = voice_assistant.llm.generate_response(user_input)
+                    response = voice_assistant.llm.generate_response(
+                        text=user_input
+                    )
                     response = bridge.clean_response(response)
                 bridge.print_bilingual(f"\n어시스턴트: {response}", f"\nAssistant: {response}")
                 

@@ -13,14 +13,19 @@ import io
 import math
 import ctypes
 from PIL import Image
+import tempfile
+import wave
+from collections import deque
+from datetime import datetime, timedelta
+import cv2
+import json
 
-
-import ctypes
-from typing import (
-    List,
-    Literal,
-    Tuple,
-)
+# Google Gemini imports
+import google.generativeai as genai
+# New Gemini SDK for TTS
+from google import genai as google_genai
+from google.genai import types
+GEMINI_TTS_AVAILABLE = True
 
 # PyTorch 2.6 security settings
 import warnings
@@ -29,164 +34,20 @@ warnings.filterwarnings("ignore", message="torch.load warnings")
 # Ignore numpy RuntimeWarning (divide by zero, overflow, invalid value)
 np.seterr(divide='ignore', invalid='ignore', over='ignore')
 
-# Libraries for speech recognition and synthesis
+# Libraries for speech recognition
 from RealtimeSTT import AudioToTextRecorder
-from RealtimeTTS import TextToAudioStream, CoquiEngine
-
-# Libraries for LLM
-from llama_cpp import Llama
-import llama_cpp.llama as llama
-import llama_cpp
-from llama_cpp.llama_chat_format import Llava15ChatHandler
-from pathlib import Path
-from contextlib import redirect_stderr
 
 # Libraries for audio
 import pygame
 import soundfile as sf
-import tempfile
 import subprocess
 import platform
 
-# Gemma3 Chat Handler for multimodal support
-class Gemma3ChatHandler(Llava15ChatHandler):
-    # Chat Format:
-    # '<bos><start_of_turn>user\n{system_prompt}\n\n{prompt}<end_of_turn>\n<start_of_turn>model\n'
-
-    DEFAULT_SYSTEM_MESSAGE = None
-
-    CHAT_FORMAT = (
-        "{{ '<bos>' }}"
-        "{%- if messages[0]['role'] == 'system' -%}"
-        "{%- if messages[0]['content'] is string -%}"
-        "{%- set first_user_prefix = messages[0]['content'] + '\n\n' -%}"
-        "{%- else -%}"
-        "{%- set first_user_prefix = messages[0]['content'][0]['text'] + '\n\n' -%}"
-        "{%- endif -%}"
-        "{%- set loop_messages = messages[1:] -%}"
-        "{%- else -%}"
-        "{%- set first_user_prefix = \"\" -%}"
-        "{%- set loop_messages = messages -%}"
-        "{%- endif -%}"
-        "{%- for message in loop_messages -%}"
-        "{%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}"
-        "{{ raise_exception(\"Conversation roles must alternate user/assistant/user/assistant/...\") }}"
-        "{%- endif -%}"
-        "{%- if (message['role'] == 'assistant') -%}"
-        "{%- set role = \"model\" -%}"
-        "{%- else -%}"
-        "{%- set role = message['role'] -%}"
-        "{%- endif -%}"
-        "{{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else \"\") }}"
-        "{%- if message['content'] is string -%}"
-        "{{ message['content'] | trim }}"
-        "{%- elif message['content'] is iterable -%}"
-        "{%- for item in message['content'] -%}"
-        "{%- if item['type'] == 'image_url' -%}"
-        "{{ '<start_of_image>' }}"
-        "{%- elif item['type'] == 'text' -%}"
-        "{{ item['text'] | trim }}"
-        "{%- endif -%}"
-        "{%- endfor -%}"
-        "{%- else -%}"
-        "{{ raise_exception(\"Invalid content type\") }}"
-        "{%- endif -%}"
-        "{{ '<end_of_turn>\n' }}"
-        "{%- endfor -%}"
-        "{%- if add_generation_prompt -%}"
-        "{{ '<start_of_turn>model\n' }}"
-        "{%- endif -%}"
-    )
-
-    @staticmethod
-    def split_text_on_image_urls(text: str, image_urls: List[str]):
-        split_text: List[Tuple[Literal["text", "image_url"], str]] = []
-        copied_urls = image_urls[:]
-        remaining = text
-        image_placeholder = "<start_of_image>"
-
-        while remaining:
-            # Find placeholder
-            pos = remaining.find(image_placeholder)
-            if pos != -1:
-                assert len(copied_urls) > 0
-                if pos > 0:
-                    split_text.append(("text", remaining[:pos]))
-                split_text.append(("text", "\n\n<start_of_image>"))
-                split_text.append(("image_url", copied_urls.pop(0)))
-                split_text.append(("text", "<end_of_image>\n\n"))
-                remaining = remaining[pos + len(image_placeholder):]
-            else:
-                assert len(copied_urls) == 0
-                split_text.append(("text", remaining))
-                remaining = ""
-        return split_text
-
-    def eval_image(self, llama: llama.Llama, image_url: str):
-
-        n_tokens = 256
-        if llama.n_tokens + n_tokens > llama.n_ctx():
-            raise ValueError(
-                f"Prompt exceeds n_ctx: {llama.n_tokens + n_tokens} > {llama.n_ctx()}"
-            )
-
-        img_bytes = self.load_image(image_url)
-        img_u8_p = self._llava_cpp.clip_image_u8_init()
-        if not self._llava_cpp.clip_image_load_from_bytes(
-            ctypes.create_string_buffer(img_bytes, len(img_bytes)),
-            ctypes.c_size_t(len(img_bytes)),
-            img_u8_p,
-        ):
-            self._llava_cpp.clip_image_u8_free(img_u8_p)
-            raise ValueError("Failed to load image.")
-
-        img_f32 = self._llava_cpp.clip_image_f32_batch()
-        img_f32_p = ctypes.byref(img_f32)
-        if not self._llava_cpp.clip_image_preprocess(self.clip_ctx, img_u8_p, img_f32_p):
-            self._llava_cpp.clip_image_f32_batch_free(img_f32_p)
-            self._llava_cpp.clip_image_u8_free(img_u8_p)
-            raise ValueError("Failed to preprocess image.")
-
-        n_embd = llama_cpp.llama_model_n_embd(llama._model.model)
-        embed = (ctypes.c_float * (n_tokens * n_embd))()
-        if not self._llava_cpp.clip_image_batch_encode(self.clip_ctx, llama.n_threads, img_f32_p, embed):
-            self._llava_cpp.clip_image_f32_batch_free(img_f32_p)
-            self._llava_cpp.clip_image_u8_free(img_u8_p)
-            raise ValueError("Failed to encode image.")
-
-        self._llava_cpp.clip_image_f32_batch_free(img_f32_p)
-        self._llava_cpp.clip_image_u8_free(img_u8_p)
-        llama_cpp.llama_set_causal_attn(llama.ctx, False)
-
-        seq_id_0 = (ctypes.c_int32 * 1)()
-        seq_ids = (ctypes.POINTER(ctypes.c_int32) * (n_tokens + 1))()
-        for i in range(n_tokens):
-            seq_ids[i] = seq_id_0
-
-        batch = llama_cpp.llama_batch()
-        batch.n_tokens = n_tokens
-        batch.token = None
-        batch.embd = embed
-        batch.pos = (ctypes.c_int32 * n_tokens)(*[i + llama.n_tokens for i in range(n_tokens)])
-        batch.seq_id = seq_ids
-        batch.n_seq_id = (ctypes.c_int32 * n_tokens)(*([1] * n_tokens))
-        batch.logits = (ctypes.c_int8 * n_tokens)()
-
-        if llama_cpp.llama_decode(llama.ctx, batch):
-            raise ValueError("Failed to decode image.")
-
-        llama_cpp.llama_set_causal_attn(llama.ctx, True)
-        # Required to avoid issues with hf tokenizer
-        llama.input_ids[llama.n_tokens : llama.n_tokens + n_tokens] = -1
-        llama.n_tokens += n_tokens
-
-def image_to_base64_data_uri(image: Image.Image, format: str = "JPEG", quality: int = 85) -> str:
-    """Convert PIL Image to base64 data URI."""
-    buffered = io.BytesIO()
-    image.save(buffered, format=format, quality=quality, optimize=True)
-    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    mime_type = f"image/{format.lower()}"
-    return f'data:{mime_type};base64,{img_base64}'
+# Configure Gemini API
+api_key = os.getenv('GEMINI_API_KEY')
+if not api_key:
+    raise ValueError("GEMINI_API_KEY environment variable is not set. Please set it with: export GEMINI_API_KEY='your_api_key'")
+genai.configure(api_key=api_key)
 
 @dataclass
 class AudioConfig:
@@ -200,11 +61,7 @@ class AudioConfig:
 class ModelConfig:
     """Class for managing model configuration"""
     stt_model: str = "base"  # Whisper model size
-    llm_model: str = None  # Local GGUF model path (uses default model if None)
-    mmproj_model: str = None  # Multimodal projection model path (for vision)
-    tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # XTTS v2 multilingual model
     device: str = "auto"  # Device: auto, cpu, cuda, mps
-    is_multimodal: bool = False  # Enable multimodal (vision) support
     
     # STT detailed settings
     stt_language: str = "ko"
@@ -214,17 +71,21 @@ class ModelConfig:
     stt_vad_min_speech_duration_ms: int = 250
     stt_vad_min_silence_duration_ms: int = 1000  # Reduced from 2000ms for faster response
     
-    # TTS detailed settings
-    tts_engine: str = "coqui"  # Using Coqui engine
-    speaker_wav: Optional[str] = None  # Voice cloning source file
-    tts_speed: float = 1.0  # TTS speed (1.0 is normal, higher is faster)
+    # Gemini settings
+    gemini_model: str = "models/gemini-2.5-flash-lite"
+    gemini_temperature: float = 0.7
+    gemini_top_p: float = 0.95
+    gemini_max_tokens: int = 8192
     
-    # LLM detailed settings
-    llm_max_tokens: int = 512
-    llm_temperature: float = 0.7
-    llm_top_p: float = 0.95
-    llm_repeat_penalty: float = 1.1
-    llm_context_size: int = 4096
+    # TTS settings
+    tts_model: str = "gemini-2.5-flash-preview-tts"
+    tts_voice: str = "Kore"  # Korean voice
+    tts_speed: float = 1.0
+    speaker_wav: Optional[str] = None  # Voice cloning source file for Coqui TTS
+    
+    # Video buffer settings
+    video_buffer_seconds: int = 30  # Keep last 30 seconds of video
+    video_fps: int = 10  # Frames per second to capture
     
     def __post_init__(self):
         """Auto-detect device after initialization"""
@@ -240,13 +101,90 @@ class ModelConfig:
                 self.device = "cpu"
                 print("Auto-detected device: CPU")
 
+class VideoBuffer:
+    """Buffer to store last N seconds of video frames with timestamps"""
+    
+    def __init__(self, buffer_seconds: int = 30, fps: int = 10):
+        self.buffer_seconds = buffer_seconds
+        self.fps = fps
+        self.max_frames = buffer_seconds * fps
+        self.frames = deque(maxlen=self.max_frames)
+        self.timestamps = deque(maxlen=self.max_frames)
+        
+    def add_frame(self, frame: Image.Image, timestamp: Optional[datetime] = None):
+        """Add a frame to the buffer with timestamp"""
+        if timestamp is None:
+            timestamp = datetime.now()
+        self.frames.append(frame)
+        self.timestamps.append(timestamp)
+    
+    def get_video_frames(self, duration_seconds: int = 30) -> List[Image.Image]:
+        """Get frames from the last N seconds"""
+        if not self.frames:
+            return []
+        
+        cutoff_time = datetime.now() - timedelta(seconds=duration_seconds)
+        result_frames = []
+        
+        for frame, timestamp in zip(self.frames, self.timestamps):
+            if timestamp >= cutoff_time:
+                result_frames.append(frame)
+        
+        return result_frames
+    
+    def create_video_file(self, duration_seconds: int = 30, output_fps: int = 10) -> Optional[str]:
+        """Create a video file from buffered frames"""
+        frames = self.get_video_frames(duration_seconds)
+        if not frames:
+            return None
+        
+        try:
+            # Create temporary video file
+            temp_file = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+            temp_path = temp_file.name
+            temp_file.close()
+            
+            # Get frame dimensions from first frame
+            first_frame = np.array(frames[0])
+            height, width = first_frame.shape[:2]
+            
+            # Initialize video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(temp_path, fourcc, output_fps, (width, height))
+            
+            # Write frames to video
+            for frame in frames:
+                # Convert PIL Image to numpy array
+                frame_array = np.array(frame)
+                # Convert RGB to BGR for OpenCV
+                if len(frame_array.shape) == 3 and frame_array.shape[2] == 3:
+                    frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+                else:
+                    frame_bgr = frame_array
+                out.write(frame_bgr)
+            
+            out.release()
+            return temp_path
+            
+        except Exception as e:
+            print(f"Error creating video file: {e}")
+            return None
+    
+    def clear(self):
+        """Clear the buffer"""
+        self.frames.clear()
+        self.timestamps.clear()
+
 class STTModule:
     """Module for converting speech to text using RealtimeSTT"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
+        self.is_listening = False
+        self.speech_start_time = None
+        self.speech_end_time = None
         
-        # Initialize RealtimeSTT recorder - simplified
+        # Initialize RealtimeSTT recorder
         self.recorder = AudioToTextRecorder(
             model=config.stt_model,
             language=config.stt_language,
@@ -257,420 +195,387 @@ class STTModule:
         )
         
     def transcribe_once(self) -> Optional[str]:
-        """Listen and transcribe once"""
+        """Listen and transcribe once, tracking speech timing"""
         is_korean = self.config.stt_language.startswith('ko')
         
         if is_korean:
             print("\n말씀해주세요...")
         else:
             print("\nPlease speak...")
-            
-        # Simply get text
+        
+        # Mark when we start listening
+        self.is_listening = True
+        self.speech_start_time = datetime.now()
+        
+        # Get text
         text = self.recorder.text()
+        
+        # Mark when speech ends
+        self.speech_end_time = datetime.now()
+        self.is_listening = False
         
         if text:
             print(f"\n사용자: {text}" if is_korean else f"\nUser: {text}")
             return text
         return None
 
-class LlamaTokenizer:
-    def __init__(self, llama_model):
-        self._llama = llama_model
-
-    def __call__(self, text, add_bos=True, return_tensors=None):
-        ids = self._llama.tokenize(text, add_bos=add_bos)
-        if return_tensors == "pt":
-            return torch.tensor([ids])
-        return ids
-
-    def decode(self, ids):
-        return self._llama.detokenize(ids).decode("utf-8", errors="ignore")
-
-class LLMModule:
-    """Local LLM response generation module using Llama.cpp with multimodal support"""
+class GeminiLLMModule:
+    """Gemini-based LLM module for multimodal response generation"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
-        self.device = config.device
-        self.is_multimodal = config.is_multimodal
+        self.model = genai.GenerativeModel(config.gemini_model)
         
-        # Set default model path if not provided
-        if config.llm_model is None:
-            # Look for model in package data or user directory
-            package_dir = Path(__file__).parent.absolute()
-            model_filename = "gemma-3-12b-it-Q4_K_M.gguf"
-            
-            # Check in package directory first
-            package_model_path = package_dir / "models" / model_filename
-            if package_model_path.exists():
-                self.model_path = str(package_model_path)
-            else:
-                # Check in user home directory
-                home_model_path = Path.home() / ".agentvox" / "models" / model_filename
-                if home_model_path.exists():
-                    self.model_path = str(home_model_path)
-                else:
-                    raise FileNotFoundError(
-                        f"Model file not found. Please download {model_filename} and place it in:\n"
-                        f"1. {package_model_path} or\n"
-                        f"2. {home_model_path}\n"
-                        f"Or provide the model path explicitly."
-                    )
-        else:
-            # Convert relative path to absolute path
-            if not os.path.isabs(config.llm_model):
-                current_dir = Path(__file__).parent.absolute()
-                self.model_path = str(current_dir / config.llm_model)
-            else:
-                self.model_path = config.llm_model
+    def generate_response(self, 
+                         text: str, 
+                         video_path: Optional[str] = None,
+                         final_image: Optional[Image.Image] = None,
+                         audio_data: Optional[bytes] = None) -> str:
+        """
+        Generate response using Gemini with multimodal input
         
-        # Set up multimodal projection model path
-        self.mmproj_path = None
-        chat_handler = None
-        
-        if self.is_multimodal and config.mmproj_model:
-            if not os.path.isabs(config.mmproj_model):
-                # If relative path, resolve it relative to model directory
-                model_dir = Path(self.model_path).parent
-                self.mmproj_path = str(model_dir / config.mmproj_model)
-            else:
-                self.mmproj_path = config.mmproj_model
-            
-            # Check if mmproj file exists
-            if not os.path.exists(self.mmproj_path):
-                # Try default mmproj filename
-                model_dir = Path(self.model_path).parent
-                default_mmproj = model_dir / "mmproj-gemma-3-12b-it-F16.gguf"
-                if default_mmproj.exists():
-                    self.mmproj_path = str(default_mmproj)
-                else:
-                    raise FileNotFoundError(f"Multimodal projection model not found: {self.mmproj_path}")
-            
-            # Initialize chat handler for multimodal
-            chat_handler = Gemma3ChatHandler(clip_model_path=self.mmproj_path, verbose=False)
-        
-        # Load Llama model
-        with open(os.devnull, 'w') as devnull:
-            with redirect_stderr(devnull):
-                self.model = Llama(
-                    model_path=self.model_path,
-                    n_gpu_layers=-1,  # Load all layers to GPU
-                    n_ctx=self.config.llm_context_size,      # Context size
-                    verbose=False,
-                    flash_attn=True,   # Use Flash Attention
-                    chat_handler=chat_handler  # Add chat handler for multimodal
-                )
-                self.tokenizer = LlamaTokenizer(self.model)
-        
-    def generate_response(self, text: str, images: Optional[List[Image.Image]] = None, max_length: int = 512) -> str:
-        """Generate response for input text, optionally with images for multimodal models"""
-        # Check if using Korean voice
+        Args:
+            text: User's transcribed speech
+            video_path: Path to video file from last 30 seconds
+            final_image: Final frame with gaze indicator
+            audio_data: Raw audio data (for future use)
+        """
         is_korean = self.config.stt_language.startswith('ko')
-
-        # Handle multimodal input
+        
+        # Build the prompt
+        system_prompt = self._build_system_prompt()
+        
+        # Prepare contents for Gemini
+        contents = []
+        
+        # Add system prompt as text
+        contents.append(system_prompt)
+        
+        # Upload and add video if available
+        if video_path and os.path.exists(video_path):
+            try:
+                # Upload video file to Gemini
+                video_file = genai.upload_file(path=video_path)
+                contents.append("\n이전 30초간의 비디오:\n" if is_korean else "\nVideo from the last 30 seconds:\n")
+                contents.append(video_file)
+            except Exception as e:
+                print(f"Failed to upload video: {e}")
+        
+        # Add final image with gaze indicator
+        if final_image:
+            contents.append("\n사용자가 보고 있는 화면:\n" if is_korean 
+                          else "\nUser's view:\n")
+            contents.append(final_image)
+        
+        # Add user's request
+        contents.append(f"\n사용자 요청: {text}" if is_korean else f"\nUser request: {text}")
+        
         try:
-            prompt = self._build_prompt()
-            # Merge images into a grid
-            image = images[-1]
-            # Convert image to data URI
-            image_uri = image_to_base64_data_uri(image, format="JPEG", quality=90)
-            
-            # Use chat completion API for multimodal input
-            messages = [
-                {
-                    "role": "system",
-                    "content": prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {'type': 'text', 'text': text},
-                        {'type': 'image_url', 'image_url': {'url': image_uri}}
-                    ]
-                }
-            ]
-            response = self.model.create_chat_completion(
-                messages=messages,
-                stop=['<end_of_turn>', '<eos>'],
-                max_tokens=512,  # Reduce for multimodal
-                temperature=self.config.llm_temperature,
-                top_p=self.config.llm_top_p,
-                repeat_penalty=self.config.llm_repeat_penalty
+            # Generate response
+            response = self.model.generate_content(
+                contents,
+                generation_config=genai.GenerationConfig(
+                    temperature=self.config.gemini_temperature,
+                    top_p=self.config.gemini_top_p,
+                    max_output_tokens=self.config.gemini_max_tokens,
+                )
             )
-            response_text = response['choices'][0]['message']['content'].strip()
+            
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            return self._clean_response(response_text)
+            
         except Exception as e:
-            print(e)
-
-        
-        response = response_text
-        
-        # Check if using Korean voice
+            print(f"Gemini API error: {e}")
+            if is_korean:
+                return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+            else:
+                return "I'm sorry. An error occurred while generating the response."
+    
+    def _build_system_prompt(self) -> str:
+        """Build system prompt"""
         is_korean = self.config.stt_language.startswith('ko')
         
-        # Remove "Assistant:" or "어시스턴트:" prefix
+        if is_korean:
+            return """
+당신은 서강대학교 미믹랩에서 개발한 AI 어시스턴트입니다.
+
+응답 규칙:
+1. 별표(*), 하이픈(-), 콜론(:) 등의 특수문자를 답변에 사용하지 않습니다.
+2. 리스트나 강조 없이 평서문만 사용합니다.
+3. 추측이나 배경 설명 없이, 눈에 보이는 사실만 묘사합니다.
+4. 불필요한 설명이나 추가 질문을 하지 않습니다.
+5. 영어 단어는 한글 음차 표기로 적습니다. 예) AI → 에이아이.
+
+시각 정보 처리:
+• 제공된 비디오는 사용자가 질문하기 전 30초간의 화면입니다.
+• 마지막 이미지의 초록색 원은 사용자가 말을 마친 시점의 시선 위치를 나타내는 시스템 표시입니다.
+• 초록색 원 자체를 언급하지 마세요. 이것은 시선 추적 시스템의 표시일 뿐입니다.
+• 사용자가 보고 있는 대상(초록색 원이 가리키는 곳)에 대해서만 답변하세요.
+
+간결하고 자연스럽게 답변하세요.
+"""
+        else:
+            return """
+You are an AI assistant developed by MimicLab at Sogang University.
+
+Response rules:
+1. Do not use symbols such as asterisks, hyphens, or colons in your replies.
+2. Write plain sentences only; no lists or formatting.
+3. State only what is visually apparent without speculation.
+4. Do not add unnecessary explanations or follow-up questions.
+
+Visual information processing:
+• The provided video shows the last 30 seconds before the user's question.
+• The green circle in the final image is a system indicator showing where the user was looking.
+• DO NOT mention the green circle itself. It is just a gaze tracking system indicator.
+• Only describe what the user is looking at (the location pointed by the green circle).
+
+Respond concisely and naturally.
+"""
+    
+    def _clean_response(self, response: str) -> str:
+        """Clean and format the response"""
+        if not response:
+            return response
+        
+        # Remove common prefixes
+        response = response.strip()
         if response.startswith("Assistant:"):
             response = response[10:].strip()
         elif response.startswith("어시스턴트:"):
             response = response[6:].strip()
         
-        # Handle empty response or response with only special characters
+        # Remove special characters
+        response = response.replace("*", "").replace("--", "").strip()
+        
+        # Check for empty or invalid response
         if not response or not re.search(r'[\uac00-\ud7a3a-zA-Z0-9]', response):
+            is_korean = self.config.stt_language.startswith('ko')
             if is_korean:
                 response = "죄송합니다. 다시 한 번 말씀해 주시겠어요?"
             else:
                 response = "I'm sorry. Could you please say that again?"
         
         return response
-    
-    def _build_prompt(self) -> str:
-        """Build prompt with conversation context"""
-        # Check if using Korean voice
-        is_korean = self.config.stt_language.startswith('ko')
-        
-        # System prompt
-        if is_korean:
-            system_prompt = """
-당신은 서강대학교 미믹랩에서 개발한 에이아이 어시스턴트입니다.
 
-응답 규칙:
-1. 별표(*), 하이픈(-), 콜론(:) 등의 특수문자를 답변에 사용하지 않습니다.
-2. 리스트나 강조 없이 평서문만 사용합니다.
-3. 추측이나 배경 설명 없이, 눈에 보이는 사실만 1인칭 시점으로 묘사합니다.
-4. 불필요한 설명이나 추가 질문을 하지 않습니다.
-5. 영어 단어는 한글 음차 표기로 적습니다. 예) AI → 에이아이.
-
-시각 정보 처리:
-• 입력 장면은 사용자가 실제로 보고 있는 1인칭 시야입니다.
-• 이미지에 있는 초록색 원은 사용자가 정확히 응시하고 있는 지점입니다.
-• 초록색 원 위치와 주변 내용을 중심으로 사용자의 질문에 답변하세요.
-
-이어지는 사용자의 질문에 답변하세요.
-
-"""
-
-        else:
-            system_prompt = """
-You are a AI assistant developed by MimicLab at Sogang University.
-
-Response rules:
-1. Do not use symbols such as asterisks, hyphens, or colons in your replies.
-2. Write plain sentences only; no lists or formatting.
-3. State only what is visually apparent without speculation or extra background.
-4. Do not add unnecessary explanations or follow‑up questions.
-
-Visual information processing:
-• The input view is the user's live first‑person perspective.
-• The green circle in the image marks the exact point where the user is looking.
-• Focus your answers on the content at and around the green circle.
-
-answer the user's question based on the following input.
-
-"""
-        return system_prompt.strip()
-    
-
-class TTSModule:
-    """TTS module using RealtimeTTS with CoquiEngine"""
+class GeminiTTSModule:
+    """TTS module using Gemini's text-to-speech API"""
     
     def __init__(self, config: ModelConfig):
         self.config = config
+        self.use_gemini_tts = GEMINI_TTS_AVAILABLE
         
-        # Initialize Coqui engine
-        self.engine = CoquiEngine(
-            model_name=config.tts_model,
-            device=config.device,
-            voice=config.speaker_wav,
-            language=config.stt_language,
-            speed=config.tts_speed
-        )
+        if self.use_gemini_tts:
+            try:
+                self.client = google_genai.Client()
+            except Exception as e:
+                print(f"Failed to initialize Gemini TTS client: {e}")
+                self.use_gemini_tts = False
         
-        # Initialize text-to-audio stream
-        self.stream = TextToAudioStream(self.engine)
+        # Fallback to Coqui TTS if Gemini TTS is not available
+        if not self.use_gemini_tts:
+            print("Using fallback TTS engine (Coqui)")
+            from RealtimeTTS import TextToAudioStream, CoquiEngine
+            self.fallback_engine = CoquiEngine(
+                model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+                device=config.device,
+                language=config.stt_language,
+                speed=config.tts_speed
+            )
+            self.fallback_stream = TextToAudioStream(self.fallback_engine)
         
-    def speak(self, text: str):
-        """Speak text and wait until complete"""
+    def speak(self, text: str) -> Optional[str]:
+        """
+        Convert text to speech using Gemini TTS and play it
+        Returns the path to the saved audio file
+        """
         if not text or not text.strip():
-            return
-            
-        try:
-            # Feed and play - blocking call
-            self.stream.feed(text)
-            self.stream.play()
+            return None
+        
+        if self.use_gemini_tts:
+            try:
+                # Generate speech using Gemini TTS
+                response = self.client.models.generate_content(
+                    model=self.config.tts_model,
+                    contents=text,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name=self.config.tts_voice,
+                                )
+                            )
+                        ),
+                    )
+                )
                 
+                # Extract audio data
+                audio_data = response.candidates[0].content.parts[0].inline_data.data
+                
+                # Save to temporary file
+                temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                self._save_wave_file(temp_file.name, audio_data)
+                
+                # Play the audio
+                self._play_audio(temp_file.name)
+                
+                # Clean up
+                os.unlink(temp_file.name)
+                
+                return temp_file.name
+                
+            except Exception as e:
+                print(f"Gemini TTS error: {e}, falling back to Coqui")
+                if hasattr(self, 'fallback_stream'):
+                    self.fallback_stream.feed(text)
+                    self.fallback_stream.play()
+        else:
+            # Use fallback TTS
+            try:
+                self.fallback_stream.feed(text)
+                self.fallback_stream.play()
+            except Exception as e:
+                print(f"Fallback TTS error: {e}")
+                
+        return None
+    
+    def _save_wave_file(self, filename: str, pcm_data: bytes, 
+                       channels: int = 1, rate: int = 24000, sample_width: int = 2):
+        """Save PCM data as WAV file"""
+        with wave.open(filename, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(rate)
+            wf.writeframes(pcm_data)
+    
+    def _play_audio(self, audio_file: str):
+        """Play audio file using system audio player"""
+        system = platform.system()
+        
+        try:
+            if system == "Darwin":  # macOS
+                subprocess.run(["afplay", audio_file], check=True)
+            elif system == "Linux":
+                # Try different audio players
+                for player in ["aplay", "paplay", "play"]:
+                    try:
+                        subprocess.run([player, audio_file], check=True)
+                        break
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        continue
+            elif system == "Windows":
+                # Use pygame for Windows
+                pygame.mixer.init()
+                pygame.mixer.music.load(audio_file)
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
         except Exception as e:
-            print(f"TTS error: {e}")
-            
+            print(f"Error playing audio: {e}")
 
 class VoiceAssistant:
-    """Main class for managing the entire voice conversation system"""
+    """Voice conversation system: Record -> 30s Video + Gaze Image -> Gemini -> TTS"""
     
     def __init__(self, model_config: ModelConfig, audio_config: AudioConfig):
         self.model_config = model_config
         self.audio_config = audio_config
         
-        # External audio source (for Aria integration)
-        self.external_audio_source = None
-        self.use_external_audio = False
+        # Video buffer for last 30 seconds
+        self.video_buffer = VideoBuffer(
+            buffer_seconds=model_config.video_buffer_seconds,
+            fps=model_config.video_fps
+        )
+        
+        # Image at speech end time with gaze indicator
+        self.current_gaze_image = None
         
         is_korean = model_config.stt_language.startswith('ko')
         
         if is_korean:
             print("모델을 초기화하는 중입니다...")
-            if model_config.is_multimodal:
-                print("멀티모달(비전) 기능이 활성화되었습니다.")
+            print("Gemini 2.5 Flash 모델을 사용합니다.")
         else:
             print("Initializing models...")
-            if model_config.is_multimodal:
-                print("Multimodal (vision) capabilities enabled.")
+            print("Using Gemini 2.5 Flash model.")
             
         self.stt = STTModule(model_config)
-        self.llm = LLMModule(model_config)
-        self.tts = TTSModule(model_config)
+        self.llm = GeminiLLMModule(model_config)
+        self.tts = GeminiTTSModule(model_config)
         
-        # Image buffer for multimodal input
-        self.image_buffer = []
     
+    def add_frame(self, frame: Image.Image, timestamp: Optional[datetime] = None):
+        """Add a video frame to the buffer"""
+        self.video_buffer.add_frame(frame, timestamp)
+    
+    def set_gaze_image(self, image: Image.Image):
+        """Set the current image with gaze indicator"""
+        self.current_gaze_image = image
+    
+    # Aria compatibility methods
     def add_image(self, image: Image.Image):
-        """Add an image to the buffer for multimodal input"""
-        if not self.model_config.is_multimodal:
-            print("Warning: Multimodal support is not enabled. Image will be ignored.")
-            return
-        
-        self.image_buffer.append(image)
-        is_korean = self.model_config.stt_language.startswith('ko')
-        if is_korean:
-            print(f"이미지가 추가되었습니다. 현재 {len(self.image_buffer)}개의 이미지가 있습니다.")
-        else:
-            print(f"Image added. Currently {len(self.image_buffer)} images in buffer.")
-    
-    def add_image_from_path(self, image_path: str):
-        """Add an image from file path to the buffer"""
-        try:
-            image = Image.open(image_path)
-            self.add_image(image)
-        except Exception as e:
-            is_korean = self.model_config.stt_language.startswith('ko')
-            if is_korean:
-                print(f"이미지 로드 실패: {e}")
-            else:
-                print(f"Failed to load image: {e}")
+        """Aria compatibility: Set gaze image"""
+        self.current_gaze_image = image
     
     def clear_images(self):
-        """Clear all images from the buffer"""
-        self.image_buffer = []
-        is_korean = self.model_config.stt_language.startswith('ko')
-        if is_korean:
-            print("이미지 버퍼가 클리어되었습니다.")
-        else:
-            print("Image buffer cleared.")
+        """Aria compatibility: Clear gaze image"""
+        self.current_gaze_image = None
     
     def set_external_audio_source(self, audio_source):
-        """Set external audio source (e.g., Aria glasses)"""
-        self.external_audio_source = audio_source
-        self.use_external_audio = True
-        is_korean = self.model_config.stt_language.startswith('ko')
-        if is_korean:
-            print("외부 오디오 소스(Aria)가 설정되었습니다.")
-        else:
-            print("External audio source (Aria) configured.")
+        """Aria compatibility: External audio not used in simplified version"""
+        pass
     
-    def listen_from_external_audio(self) -> Optional[str]:
-        """Listen to audio from external source (Aria) and transcribe"""
-        import time
-        
-        is_korean = self.model_config.stt_language.startswith('ko')
-        
-        if is_korean:
-            print("\n🎤 Aria 마이크로 말씀해주세요...")
-        else:
-            print("\n🎤 Please speak into Aria microphone...")
-        
-        # Collect audio chunks from Aria
-        audio_chunks = []
-        silence_count = 0
-        max_silence = 50  # About 5 seconds of silence
-        
-        while True:
-            # Get audio chunk from Aria
-            chunk = self.external_audio_source.get_audio_chunk(1600)  # 1600 samples ≈ 33ms at 48kHz
-            
-            if chunk is not None:
-                audio_chunks.append(chunk)
-                # Reset silence counter if we got audio
-                silence_count = 0
-            else:
-                silence_count += 1
-                if silence_count > max_silence:
-                    break
-                time.sleep(0.1)  # Wait 100ms before next check
-        
-        if audio_chunks:
-            # Concatenate all chunks
-            import numpy as np
-            audio_data = np.concatenate(audio_chunks)
-            
-            # Feed to RealtimeSTT
-            self.stt.recorder.feed_audio(audio_data)
-            
-            # Get transcription
-            return self.stt.recorder.text()
-        
-        return None
+    
     
     def run_conversation_loop(self):
-        """Run conversation loop - simple version"""
+        """Core loop: Record audio -> 30s video + gaze image -> Gemini -> TTS"""
         is_korean = self.model_config.stt_language.startswith('ko')
         
-        if is_korean:
-            print("음성 대화 시스템이 시작되었습니다.")
-            print("종료하려면 '종료'라고 말하세요.")
-        else:
-            print("Voice conversation system started.")
-            print("Say 'exit' to quit.")
-        print("-" * 50)
+        print("=" * 50)
+        print("음성 대화 시스템 시작" if is_korean else "Voice System Started")
+        print("종료: '종료' 또는 'exit'" if is_korean else "Exit: say 'exit'")
+        print("=" * 50)
         
         while True:
-            # 1. Listen to user
-            if self.use_external_audio and self.external_audio_source:
-                # Use external audio source (Aria)
-                user_input = self.listen_from_external_audio()
-            else:
-                # Use computer microphone
-                user_input = self.stt.transcribe_once()
+            # 1. Record and transcribe user speech
+            user_input = self.stt.transcribe_once()
             
             if not user_input:
                 continue
                 
             # Check exit command
             if "exit" in user_input.lower() or "종료" in user_input:
-                if is_korean:
-                    print("\n대화를 종료합니다.")
-                else:
-                    print("\nEnding conversation.")
+                print("\n👋 " + ("종료합니다." if is_korean else "Goodbye."))
                 break
             
-            # 2. Get LLM response (with images if available)
-            images_to_use = self.image_buffer if self.image_buffer else None
-            if images_to_use:
-                if is_korean:
-                    print(f"\n{len(images_to_use)}개의 이미지와 함께 응답을 생성하는 중...")
-                else:
-                    print(f"\nGenerating response with {len(images_to_use)} images...")
+            # 2. Create 30-second video from buffer
+            video_path = None
+            if self.video_buffer.frames:
+                video_path = self.video_buffer.create_video_file(duration_seconds=30)
             
-            response = self.llm.generate_response(user_input, images=images_to_use)
-
-            response = response.replace("*", "").replace("--", "").strip()
+            # 3. Get gaze image at speech end time
+            final_gaze_image = self.current_gaze_image
             
-            print(f"\n어시스턴트: {response}" if is_korean else f"\nAssistant: {response}")
+            # 4. Send to Gemini with prompt
+            response = self.llm.generate_response(
+                text=user_input,
+                video_path=video_path,
+                final_image=final_gaze_image
+            )
             
-            # Clear images after use
-            if images_to_use:
-                self.clear_images()
+            # 5. Show text output
+            print(f"\n💬 {response}")
             
-            # 3. Speak response - this blocks until complete
+            # 6. Convert to speech and play
             self.tts.speak(response)
             
-            # 4. Loop back to listening
-            # No need for delays or complex state management
+            # Clean up
+            if video_path and os.path.exists(video_path):
+                try:
+                    os.unlink(video_path)
+                except:
+                    pass
+            self.current_gaze_image = None
 
 # Main execution function
 def main():
@@ -682,7 +587,7 @@ def main():
     # Initialize voice assistant
     assistant = VoiceAssistant(model_config, audio_config)
     
-    # Run console conversation mode
+    # Run conversation loop
     assistant.run_conversation_loop()
 
 if __name__ == "__main__":

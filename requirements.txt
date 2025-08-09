@@ -13,3 +13,11 @@ mecab-python3
 unidic-lite
 torch>=2.6.0
 spacy
+
+# Google Gemini API
+google-generativeai>=0.8.0
+google-genai>=0.1.0  # For Gemini TTS
+
+# Video processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
